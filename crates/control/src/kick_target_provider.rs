@@ -259,7 +259,7 @@ fn collect_kick_targets(
         })
         .map(|kick_target| KickTargetWithKickVariants {
             kick_target,
-            kick_variants: vec![KickVariant::Forward, KickVariant::Side, KickVariant::Turn],
+            kick_variants: vec![KickVariant::Forward],
         })
         .collect();
     (kick_opportunities, allow_instant_kicks)
@@ -304,12 +304,12 @@ fn generate_goal_line_kick_targets(
     let left_goal_half = field_to_ground
         * point![
             field_dimensions.length / 2.0,
-            field_dimensions.goal_inner_width / 4.0
+            field_dimensions.goal_inner_width / 3.8
         ];
     let right_goal_half = field_to_ground
         * point![
             field_dimensions.length / 2.0,
-            -field_dimensions.goal_inner_width / 4.0
+            -field_dimensions.goal_inner_width / 3.8
         ];
     vec![
         KickTarget::new(left_goal_half),
