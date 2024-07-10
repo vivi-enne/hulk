@@ -91,7 +91,7 @@ impl KickTargetProvider {
             goal_line_kick_variants: context.goal_line_kick_variants.clone(),
         };
 
-        let (kick_opportunities, allow_instant_kicks) = collect_kick_targets(
+        let (kick_opportunities, mut allow_instant_kicks) = collect_kick_targets(
             *context.ground_to_field,
             context.field_dimensions,
             &obstacle_circles,
@@ -99,7 +99,7 @@ impl KickTargetProvider {
             collect_kick_targets_parameters,
             context.filtered_game_controller_state,
         );
-
+        allow_instant_kicks = false;
         Ok(MainOutputs {
             kick_opportunities: kick_opportunities.into(),
             obstacle_circles: obstacle_circles.into(),
