@@ -1,0 +1,234 @@
+<mujoco model="NaoV6">
+    <option timestep="0.005" integrator="implicitfast">
+        <!--<flag
+        gravity="disable"/>-->
+    </option>
+    <asset>
+        <texture type="skybox" builtin="gradient" rgb1=".3 .5 .7" rgb2="0 0 0" width="32"
+            height="512" />
+        <texture name="grid" type="2d" builtin="checker" width="512" height="512" rgb1=".1 .2 .3"
+            rgb2=".2 .3 .4" />
+        <material name="grid" texture="grid" texrepeat="1 1" texuniform="true" reflectance=".2" />
+    </asset>
+    <visual>
+        <global offwidth="1280" offheight="720" />
+    </visual>
+    <default>
+        <geom rgba="0.5 0.5 0.5 0.5" />
+    </default>
+    <worldbody>
+        <geom name="floor" size="0 0 .05" type="plane" material="grid" condim="3" />
+        <light name="top" pos="0 0 2" mode="trackcom" dir="0 0 -1" />
+        <body name="torso" pos="0 0 2" euler="0 0 0">
+            <freejoint name="root" />
+            <camera name="robot" mode="targetbody" target="torso" pos="0 1 0" />
+            <geom name="torso" type="sphere" size="0.0642" />
+            <site name="imu" />
+            <body name="head" pos="0 0 0.1265">
+                <inertial pos="0.0544502 0.000377283 0.000506844"
+                    quat="0.999831 -0.00839856 -0.00270558 0.0161273" mass="1.90402"
+                    diaginertia="0.0037078 0.00362436 0.00247001" />
+                <joint name="head_yaw" type="hinge" axis="0 0 1" range="-119.5 119.5" />
+                <joint name="head_pitch" type="hinge" axis="0 1 0" range="-38.5 29.5" />
+                <geom name="head" type="cylinder" size="0.053 0.0705" euler="90 0 0" pos="0 0 0.053" />
+            </body>
+            <!--
+<geom name="left_shoulder" type="sphere" size="0.03" pos="0 0.098 0.1"/>
+-->
+            <body name="left_shoulder" pos="0 0.098 0.1">
+                <inertial pos="0.00563 -0.02455 0.0033" quat="0.467645 0.46185 0.492756 0.570257"
+                    mass="0.15777" diaginertia="0.00027823 0.000242894 8.25818e-05" />
+                <joint name="left_shoulder_pitch" type="hinge" axis="0 1 0" range="-119.5 119.5" />
+                <joint name="left_shoulder_roll" type="hinge" axis="1 0 0" range="-18 76" />
+                <geom name="left_upper_arm" type="capsule" size="0.036" fromto="0 0 0 0.105 0.015 0" />
+                <body name="left_elbow" pos="0.105 0.015 0">
+                    <inertial pos="0.000206645 -0.0749538 5.58898e-05"
+                        quat="0.529427 0.528509 -0.470412 0.468079" mass="1.05536"
+                        diaginertia="0.00294834 0.00293619 0.000670399" />
+                    <joint name="left_elbow_yaw" type="hinge" axis="1 0 0" range="-119.5 119.5" />
+                    <joint name="left_elbow_roll" type="hinge" axis="0 0 1" range="-88.5 -2" />
+                    <geom name="left_lower_arm" type="capsule" size="0.036"
+                        fromto="0 0 0 0.05595 0 0" />
+                    <body name="left_wrist" pos="0.05595 0 0">
+                        <inertial pos="-0.000880001 0.00308 0.03434"
+                            quat="0.346526 0.607704 0.329318 0.634165" mass="0.18533"
+                            diaginertia="0.000137482 0.000131631 6.85194e-05" />
+                        <joint name="left_wrist_yaw" type="hinge" axis="1 0 0" range="-104.5 104.5" />
+                        <geom name="left_wrist" type="capsule" size="0.036"
+                            fromto="0 0 0 0.05775 0 0" />
+                    </body>
+                </body>
+            </body>
+            <!--
+<geom name="right_shoulder" type="sphere" size="0.03"/>
+-->
+            <body name="right_shoulder" pos="0 -0.098 0.1">
+                <inertial pos="-0.00563 -0.02455 0.0033" quat="0.556969 0.570609 0.359404 0.484788"
+                    mass="0.15777" diaginertia="0.000287934 0.00025515 8.56154e-05" />
+                <joint name="right_shoulder_pitch" type="hinge" axis="0 1 0" range="-119.5 119.5" />
+                <joint name="right_shoulder_roll" type="hinge" axis="1 0 0" range="-18 76" />
+                <geom name="right_upper_arm" type="capsule" size="0.036"
+                    fromto="0 0 0 0.105 -0.015 0" />
+                <body name="right_elbow" pos="0.105 -0.015 0">
+                    <inertial pos="-0.000206645 -0.0749538 5.58898e-05"
+                        quat="0.520545 0.522832 -0.476779 0.477871" mass="1.05536"
+                        diaginertia="0.00294822 0.00293633 0.000670487" />
+                    <joint name="right_elbow_yaw" type="hinge" axis="1 0 0" range="-119.5 119.5" />
+                    <joint name="right_elbow_roll" type="hinge" axis="0 0 1" range="-88.5 -2" />
+                    <geom name="right_lower_arm" type="capsule" size="0.036"
+                        fromto="0 0 0 0.05595 0 0" />
+                    <body name="right_wrist" pos="0.05595 0 0">
+                        <inertial pos="0.000879999 0.00308 0.03434"
+                            quat="0.422432 0.617987 0.303847 0.589339" mass="0.18533"
+                            diaginertia="0.000139307 0.000131711 6.66137e-05" />
+                        <joint name="right_wrist_yaw" type="hinge" axis="1 0 0" range="-104.5 104.5" />
+                        <geom name="right_wrist" type="capsule" size="0.036"
+                            fromto="0 0 0 0.05775 0 0" />
+                    </body>
+                </body>
+            </body>
+            <body name="left_upper_leg" pos="0 0.05 -0.085" euler="0 90 0">
+                <inertial pos="-0.0440868 0.00137481 0.00323819"
+                    quat="0.570718 0.584458 0.376298 0.437137" mass="1.75759"
+                    diaginertia="0.00271235 0.002536 0.00190276" />
+                <joint name="left_hip_yaw_pitch" type="hinge" axis="-1 -1 0" range="-65.62 42.44" />
+                <joint name="left_hip_roll" type="hinge" axis="0 0 1" range="-21.74 45.29" />
+                <joint name="left_hip_pitch" type="hinge" axis="0 1 0" range="-88 27.73" />
+                <geom name="left_upper_leg" type="capsule" size="0.036" fromto="0 0 0 0.105 0 0" />
+                <body name="left_lower_leg" pos="0.1 0 0">
+                    <inertial pos="-0.0555768 -0.00198465 0.00358653"
+                        quat="0.388609 0.504824 0.584388 0.50262" mass="1.27576"
+                        diaginertia="0.00254977 0.00235446 0.00153436" />
+                    <joint name="left_knee_pitch" type="hinge" axis="0 1 0" range="-5.29 121.04" />
+                    <geom name="left_lower_leg" type="capsule" size="0.036" fromto="0 0 0 0.105 0 0" />
+                    <body name="left_foot" pos="0.1029 0 0" euler="0 -90 0">
+                        <inertial pos="-0.0283705 -0.00643226 0.0232425"
+                            quat="0.978902 -0.00086125 0.000229755 0.204327" mass="0.67584"
+                            diaginertia="0.00151112 0.00147942 0.000810478" />
+                        <joint name="left_ankle_pitch" type="hinge" axis="0 1 0"
+                            range="-68.15 52.86" />
+                        <joint name="left_ankle_roll" type="hinge" axis="1 0 0" range="-22.79 44.06" />
+                        <geom name="left_foot" type="box" size="0.08 0.045 0.0175"
+                            pos="0.06 0.005 -0.0175" />
+                    </body>
+                </body>
+            </body>
+            <body name="right_upper_leg" pos="0 -0.05 -0.085" euler="0 90 0">
+                <inertial pos="-0.0440868 0.00137481 -0.00323819"
+                    quat="0.48943 0.660626 0.399823 0.405184" mass="1.75759"
+                    diaginertia="0.00271296 0.00255859 0.00188171" />
+                <joint name="right_hip_yaw_pitch" type="hinge" axis="-1 1 0" range="-42.44 65.62" />
+                <joint name="right_hip_roll" type="hinge" axis="0 0 1" range="-45.29 21.74 " />
+                <joint name="right_hip_pitch" type="hinge" axis="0 1 0" range="-88 27.73" />
+                <geom name="right_upper_leg" type="capsule" size="0.036" fromto="0 0 0 0.105 0 0" />
+                <body name="right_lower_leg" pos="0.1 0 0">
+                    <inertial pos="-0.0555768 -0.00198465 -0.00358653"
+                        quat="0.491399 0.391143 0.464231 0.624519" mass="1.27576"
+                        diaginertia="0.00255207 0.00238362 0.0015015" />
+                    <joint name="right_knee_pitch" type="hinge" axis="0 1 0" range="-5.9 121.04" />
+                    <!--
+ The Fuck?! they are not the same as the left leg? 
+-->
+                    <geom name="right_lower_leg" type="capsule" size="0.036"
+                        fromto="0 0 0 0.105 0 0" />
+                    <body name="right_foot" pos="0.1029 0 0" euler="0 -90 0">
+                        <inertial pos="-0.0283705 0.00643194 0.0232424"
+                            quat="0.980132 0.000741722 0.000382099 -0.198346" mass="0.67584"
+                            diaginertia="0.00151073 0.0014788 0.000809756" />
+                        <joint name="right_ankle_pitch" type="hinge" axis="0 1 0"
+                            range="-67.97 53.4" />
+                        <joint name="right_ankle_roll" type="hinge" axis="1 0 0" range="-44.06 22.8" />
+                        <geom name="right_foot" type="box" size="0.08 0.045 0.0175"
+                            pos="0.06 -0.005 -0.0175" />
+                    </body>
+                </body>
+            </body>
+        </body>
+    </worldbody>
+    <equality>
+        <joint joint1="left_hip_yaw_pitch" joint2="right_hip_yaw_pitch" polycoef="0 -1 0 0 0" />
+    </equality>
+    <contact>
+        <exclude body1="left_wrist" body2="left_shoulder" />
+        <exclude body1="right_wrist" body2="right_shoulder" />
+    </contact>
+    <sensor>
+        <accelerometer name="accelerometer" site="imu" />
+        <gyro name="gyroscope" site="imu" />
+        <jointpos name="head_yaw" joint="head_yaw" />
+        <jointpos name="head_pitch" joint="head_pitch" />
+        <jointpos name="left_shoulder_pitch" joint="left_shoulder_pitch" />
+        <jointpos name="left_shoulder_roll" joint="left_shoulder_roll" />
+        <jointpos name="left_elbow_yaw" joint="left_elbow_yaw" />
+        <jointpos name="left_elbow_roll" joint="left_elbow_roll" />
+        <jointpos name="left_wrist_yaw" joint="left_wrist_yaw" />
+        <jointpos name="right_shoulder_pitch" joint="right_shoulder_pitch" />
+        <jointpos name="right_shoulder_roll" joint="right_shoulder_roll" />
+        <jointpos name="right_elbow_yaw" joint="right_elbow_yaw" />
+        <jointpos name="right_elbow_roll" joint="right_elbow_roll" />
+        <jointpos name="right_wrist_yaw" joint="right_wrist_yaw" />
+        <jointpos name="left_hip_yaw_pitch" joint="left_hip_yaw_pitch" />
+        <jointpos name="left_hip_roll" joint="left_hip_roll" />
+        <jointpos name="left_hip_pitch" joint="left_hip_pitch" />
+        <jointpos name="left_knee_pitch" joint="left_knee_pitch" />
+        <jointpos name="left_ankle_pitch" joint="left_ankle_pitch" />
+        <jointpos name="left_ankle_roll" joint="left_ankle_roll" />
+        <jointpos name="right_hip_yaw_pitch" joint="right_hip_yaw_pitch" />
+        <jointpos name="right_hip_roll" joint="right_hip_roll" />
+        <jointpos name="right_hip_pitch" joint="right_hip_pitch" />
+        <jointpos name="right_knee_pitch" joint="right_knee_pitch" />
+        <jointpos name="right_ankle_pitch" joint="right_ankle_pitch" />
+        <jointpos name="right_ankle_roll" joint="right_ankle_roll" />
+    </sensor>
+    <!--
+ <actuator>
+    <position name="head_yaw" joint="head_yaw" kv="0.2"/>
+    <position name="head_pitch" joint="head_pitch" kv="0.2"/>
+
+    <position name="left_shoulder_pitch" joint="left_shoulder_pitch" kv="0.2"/>
+    <position name="left_shoulder_roll" joint="left_shoulder_roll" kv="0.2"/>
+    <position name="left_elbow_yaw" joint="left_elbow_yaw" kv="0.2"/>
+    <position name="left_elbow_roll" joint="left_elbow_roll" kv="0.2"/>
+    <position name="left_wrist_yaw" joint="left_wrist_yaw" kv="0.2"/>
+
+    <position name="right_shoulder_pitch" joint="right_shoulder_pitch" kv="0.2"/>
+    <position name="right_shoulder_roll" joint="right_shoulder_roll" kv="0.2"/>
+    <position name="right_elbow_yaw" joint="right_elbow_yaw" kv="0.2"/>
+    <position name="right_elbow_roll" joint="right_elbow_roll" kv="0.2"/>
+    <position name="right_wrist_yaw" joint="right_wrist_yaw" kv="0.2"/>
+
+    <position name="left_hip_yaw_pitch" joint="left_hip_yaw_pitch" kv="0.2"/>
+    <position name="left_hip_roll" joint="left_hip_roll" kv="0.2"/>
+    <position name="left_hip_pitch" joint="left_hip_pitch" kv="0.2"/>
+    <position name="left_knee_pitch" joint="left_knee_pitch" kv="0.2"/>
+    <position name="left_ankle_pitch" joint="left_ankle_pitch" kv="0.2"/>
+    <position name="left_ankle_roll" joint="left_ankle_roll" kv="0.2"/>
+
+    <position name="right_hip_yaw_pitch" joint="right_hip_yaw_pitch" kv="0.2"/>
+    <position name="right_hip_roll" joint="right_hip_roll" kv="0.2"/>
+    <position name="right_hip_pitch" joint="right_hip_pitch" kv="0.2"/>
+    <position name="right_knee_pitch" joint="right_knee_pitch" kv="0.2"/>
+    <position name="right_ankle_pitch" joint="right_ankle_pitch" kv="0.2"/>
+    <position name="right_ankle_roll" joint="right_ankle_roll" kv="0.2"/>
+  </actuator> 
+-->
+    <keyframe>
+        <!--
+
+    The values below are split into rows for readability:
+      torso position
+      torso orientation
+      head
+      left arm
+      right arm
+      left leg
+      right leg
+    
+-->
+        <key name="zero" qpos="0 0 2.0 1 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0" />
+        <key name="ready"
+            qpos="0 0 0.3 1 0 0 0 0 0 1.57 0.1 0 0 0 1.57 0.1 0 0 0 0 0 -0.25 0.35 -0.1 0 0 0 -0.25 0.35 -0.1 0" />
+        <key name="face-down"
+            qpos="0 0 0.064 0.64 0.03 0.77 -0.02 0 -0.4 1.33 0.15 0.19 -0.08 0.1 1.31 0.15 0.19 -0.08 -0.05 0 0 -0.07 0.29 -0.04 0.02 0 0.04 -0.1 0.31 0.04 0" />
+    </keyframe>
+</mujoco>

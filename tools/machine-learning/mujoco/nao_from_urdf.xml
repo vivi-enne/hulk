@@ -1,0 +1,123 @@
+<mujoco model="NAOH25V60">
+  <compiler angle="radian"/>
+
+  <worldbody>
+    <geom size="0.04" pos="-0.03 0 -0.06"/>
+    <geom size="0.0453" pos="0.0006 0 -0.015"/>
+    <geom size="0.06" pos="-0.01 0 0"/>
+    <geom size="0.0642" pos="0.0019 0 0.056"/>
+    <body name="HeadYaw_link" pos="0 0 0.1265">
+      <inertial pos="-1e-05 0 -0.02742" quat="0.70765 -0.00173495 0.00151894 0.706559" mass="0.07842" diaginertia="1.70396e-05 1.60324e-05 5.53348e-06"/>
+      <joint name="HeadYaw" pos="0 0 0" axis="0 0 1" range="-2.08567 2.08567" actuatorfrcrange="-1.547 1.547"/>
+      <body name="HeadPitch_link" quat="0.500002 -0.499999 -0.500001 -0.499997">
+        <inertial pos="0.0544502 0.000377283 0.000506844" quat="0.999831 -0.00839856 -0.00270558 0.0161273" mass="1.90402" diaginertia="0.0037078 0.00362436 0.00247001"/>
+        <joint name="HeadPitch" pos="0 0 0" axis="0 0 1" range="-0.671952 0.514872" actuatorfrcrange="-1.532 1.532"/>
+        <geom size="0.053 0.0705" pos="0.053 0 0" quat="1.76038e-12 -1.32679e-06 1 -1.32679e-06" type="cylinder"/>
+      </body>
+    </body>
+    <body name="LShoulderPitch_link" pos="0 0.098 0.1" quat="0.707105 -0.707108 0 0">
+      <inertial pos="-0.00165 -0.000139999 -0.02663" quat="0.353499 0.572853 -0.442525 0.592494" mass="0.09304" diaginertia="2.02186e-05 1.91002e-05 1.30704e-05"/>
+      <joint name="LShoulderPitch" pos="0 0 0" axis="0 0 1" range="-2.08567 2.08567" actuatorfrcrange="-1.329 1.329"/>
+      <body name="LShoulderRoll_link" quat="0.500002 0.499999 -0.500001 0.499997">
+        <inertial pos="0.00563 -0.02455 0.0033" quat="0.467645 0.46185 0.492756 0.570257" mass="0.15777" diaginertia="0.00027823 0.000242894 8.25818e-05"/>
+        <joint name="LShoulderRoll" pos="0 0 0" axis="0 0 1" range="-0.314159 1.32645" actuatorfrcrange="-1.7835 1.7835"/>
+        <body name="LElbowYaw_link" pos="0.015 -0.105 0" quat="0.707105 0.707108 0 0">
+          <inertial pos="1.19332e-09 -0.00014 -0.02744" quat="-0.000545392 0.711779 -0.000696018 0.702403" mass="0.06483" diaginertia="2.76333e-05 2.66179e-05 5.592e-06"/>
+          <joint name="LElbowYaw" pos="0 0 0" axis="0 0 1" range="-2.08567 2.08567" actuatorfrcrange="-1.547 1.547"/>
+          <body name="LElbowRoll_link" quat="0.707105 -0.707108 0 0">
+            <inertial pos="0.000206645 -0.0749538 5.58898e-05" quat="0.529427 0.528509 -0.470412 0.468079" mass="1.05536" diaginertia="0.00294834 0.00293619 0.000670399"/>
+            <joint name="LElbowRoll" pos="0 0 0" axis="0 0 1" range="-1.54462 -0.0349066" actuatorfrcrange="-1.532 1.532"/>
+            <geom size="0.036 0.08715" pos="0 -0.06485 0" quat="0.707105 0.707108 0 0" type="cylinder"/>
+            <geom size="0.04" pos="0 -0.116 0" quat="0.707105 0 0 -0.707108"/>
+            <body name="LWristYaw_link" pos="0 -0.05595 0" quat="0.707105 0.707108 0 0">
+              <inertial pos="-0.000880001 0.00308 0.03434" quat="0.346526 0.607704 0.329318 0.634165" mass="0.18533" diaginertia="0.000137482 0.000131631 6.85194e-05"/>
+              <joint name="LWristYaw" pos="0 0 0" axis="0 0 1" range="-1.82387 1.82387" actuatorfrcrange="-0.4075 0.4075"/>
+            </body>
+          </body>
+        </body>
+      </body>
+    </body>
+    <body name="LHipYawPitch_link" pos="0 0.05 -0.085" quat="0.270599 -0.65328 -0.653283 -0.270597">
+      <inertial pos="0.00586237 -0.0183882 -0.012818" quat="0.708083 0.0259824 -0.435811 0.554988" mass="0.249404" diaginertia="0.000171156 0.000145675 0.000131938"/>
+      <joint name="LHipYawPitch" pos="0 0 0" axis="0 0 1" range="-1.14529 0.740718" actuatorfrcrange="-3.348 3.348"/>
+      <geom size="0.035" pos="0.00388908 -0.0225 -0.00742461" quat="0.270599 0.65328 0.653282 0.2706"/>
+      <body name="LHipRoll_link" quat="0.65328 -0.653283 0.270597 0.270598">
+        <inertial pos="-0.00515 -0.00029 -0.01549" quat="0.453959 0.527953 0.574067 0.430853" mass="0.14053" diaginertia="6.08587e-05 5.59269e-05 2.22526e-05"/>
+        <joint name="LHipRoll" pos="0 0 0" axis="0 0 1" range="-0.379435 0.79046" actuatorfrcrange="-3.348 3.348"/>
+        <body name="LHipPitch_link" quat="0.707105 0.707108 0 0">
+          <inertial pos="-0.0440868 0.00137481 0.00323819" quat="0.570718 0.584458 0.376298 0.437137" mass="1.75759" diaginertia="0.00271235 0.002536 0.00190276"/>
+          <joint name="LHipPitch" pos="0 0 0" axis="0 0 1" range="-1.53589 0.48398" actuatorfrcrange="-3.023 3.023"/>
+          <geom size="0.045 0.066359" pos="-0.04 0.002225 0.002" quat="0.672459 -0.218628 -0.706414 -0.0313018" type="cylinder"/>
+          <geom size="0.05" pos="-0.0435 0 0.006" quat="0.499998 0.5 0.500002 0.5"/>
+          <body name="LKneePitch_link" pos="-0.1 0 0">
+            <inertial pos="-0.0555768 -0.00198465 0.00358653" quat="0.388609 0.504824 0.584388 0.50262" mass="1.27576" diaginertia="0.00254977 0.00235446 0.00153436"/>
+            <joint name="LKneePitch" pos="0 0 0" axis="0 0 1" range="-0.0923279 2.11255" actuatorfrcrange="-3.023 3.023"/>
+            <geom size="0.047 0.0702" pos="-0.0575 -0.004 0.004" quat="0.348798 0.615092 -0.188299 -0.681575" type="cylinder"/>
+            <body name="LAnklePitch_link" pos="-0.1029 0 0">
+              <inertial pos="0.00935751 0.00805213 -0.00392102" quat="0.244148 0.667573 0.444782 0.544892" mass="0.657759" diaginertia="0.000598922 0.000588275 0.00056615"/>
+              <joint name="LAnklePitch" pos="0 0 0" axis="0 0 1" range="-1.18944 0.922581" actuatorfrcrange="-3.023 3.023"/>
+              <geom size="0.05" pos="0.01 0.01 -0.005" quat="0.499998 0.5 0.500002 0.5"/>
+              <body name="LAnkleRoll_link" quat="0.707105 -0.707108 0 0">
+                <inertial pos="-0.0283705 -0.00643226 0.0232425" quat="0.978902 -0.00086125 0.000229755 0.204327" mass="0.67584" diaginertia="0.00151112 0.00147942 0.000810478"/>
+                <joint name="LAnkleRoll" pos="0 0 0" axis="0 0 1" range="-0.397761 0.768992" actuatorfrcrange="-3.348 3.348"/>
+                <geom size="0.0175 0.08 0.045" pos="-0.027 -0.00750021 0.0225" quat="9.38184e-07 9.38187e-07 -0.707108 -0.707105" type="box"/>
+              </body>
+            </body>
+          </body>
+        </body>
+      </body>
+    </body>
+    <body name="RHipYawPitch_link" pos="0 -0.05 -0.085" quat="0.65328 -0.270598 -0.270598 -0.653283">
+      <inertial pos="0.00586237 -0.0183882 0.012818" quat="0.715071 -0.0754514 0.405013 0.564752" mass="0.249404" diaginertia="0.000179614 0.000155385 0.000130704"/>
+      <joint name="RHipYawPitch" pos="0 0 0" axis="0 0 1" range="-1.14529 0.740718" actuatorfrcrange="-3.348 3.348"/>
+      <geom size="0.035" pos="0.00388908 -0.0225 0.00742461" quat="0.65328 0.270597 0.270598 0.653283"/>
+      <body name="RHipRoll_link" quat="0.65328 -0.653283 -0.270597 -0.270598">
+        <inertial pos="-0.00515 0.00029 -0.01549" quat="0.431269 0.573083 0.528698 0.453941" mass="0.14053" diaginertia="6.08554e-05 5.59208e-05 2.2268e-05"/>
+        <joint name="RHipRoll" pos="0 0 0" axis="0 0 1" range="-0.79046 0.379435" actuatorfrcrange="-3.348 3.348"/>
+        <body name="RHipPitch_link" quat="0.707105 0.707108 0 0">
+          <inertial pos="-0.0440868 0.00137481 -0.00323819" quat="0.48943 0.660626 0.399823 0.405184" mass="1.75759" diaginertia="0.00271296 0.00255859 0.00188171"/>
+          <joint name="RHipPitch" pos="0 0 0" axis="0 0 1" range="-1.53589 0.48398" actuatorfrcrange="-3.0226 3.0226"/>
+          <geom size="0.045 0.066359" pos="-0.04 0.002225 -0.002" quat="0.706413 -0.0313052 -0.672459 -0.218632" type="cylinder"/>
+          <geom size="0.05" pos="-0.0435 0 -0.006" quat="0.499998 0.5 0.500002 0.5"/>
+          <body name="RKneePitch_link" pos="-0.1 0 0">
+            <inertial pos="-0.0555768 -0.00198465 -0.00358653" quat="0.491399 0.391143 0.464231 0.624519" mass="1.27576" diaginertia="0.00255207 0.00238362 0.0015015"/>
+            <joint name="RKneePitch" pos="0 0 0" axis="0 0 1" range="-0.0923279 2.11255" actuatorfrcrange="-3.0226 3.0226"/>
+            <geom size="0.047 0.0702" pos="-0.0575 -0.004 -0.004" quat="0.188295 -0.681575 -0.348803 0.615092" type="cylinder"/>
+            <body name="RAnklePitch_link" pos="-0.1029 0 0">
+              <inertial pos="0.00935751 0.00805213 0.00392102" quat="0.568567 0.335538 0.658202 0.361822" mass="0.657759" diaginertia="0.00059947 0.000585973 0.000567995"/>
+              <joint name="RAnklePitch" pos="0 0 0" axis="0 0 1" range="-1.1863 0.932006" actuatorfrcrange="-3.0226 3.0226"/>
+              <geom size="0.05" pos="0.01 0.01 0.005" quat="0.499998 0.5 0.500002 0.5"/>
+              <body name="RAnkleRoll_link" quat="0.707105 -0.707108 0 0">
+                <inertial pos="-0.0283705 0.00643194 0.0232424" quat="0.980132 0.000741722 0.000382099 -0.198346" mass="0.67584" diaginertia="0.00151073 0.0014788 0.000809756"/>
+                <joint name="RAnkleRoll" pos="0 0 0" axis="0 0 1" range="-0.768992 0.397761" actuatorfrcrange="-3.348 3.348"/>
+                <geom size="0.0175 0.08 0.045" pos="-0.027 0.00749979 0.0225" quat="9.38184e-07 9.38187e-07 -0.707108 -0.707105" type="box"/>
+              </body>
+            </body>
+          </body>
+        </body>
+      </body>
+    </body>
+    <body name="RShoulderPitch_link" pos="0 -0.098 0.1" quat="0.707105 -0.707108 0 0">
+      <inertial pos="-0.00165 -0.000140001 0.02663" quat="0.572853 0.353499 -0.592494 0.442525" mass="0.09304" diaginertia="2.02186e-05 1.91002e-05 1.30704e-05"/>
+      <joint name="RShoulderPitch" pos="0 0 0" axis="0 0 1" range="-2.08567 2.08567" actuatorfrcrange="-1.329 1.329"/>
+      <body name="RShoulderRoll_link" quat="0.500002 0.499999 -0.500001 0.499997">
+        <inertial pos="-0.00563 -0.02455 0.0033" quat="0.556969 0.570609 0.359404 0.484788" mass="0.15777" diaginertia="0.000287934 0.00025515 8.56154e-05"/>
+        <joint name="RShoulderRoll" pos="0 0 0" axis="0 0 1" range="-1.32645 0.314159" actuatorfrcrange="-1.783 1.783"/>
+        <body name="RElbowYaw_link" pos="-0.015 -0.105 0" quat="0.707105 0.707108 0 0">
+          <inertial pos="1.19332e-09 -0.00014 -0.02744" quat="-0.000545392 0.711779 -0.000696018 0.702403" mass="0.06483" diaginertia="2.76333e-05 2.66179e-05 5.592e-06"/>
+          <joint name="RElbowYaw" pos="0 0 0" axis="0 0 1" range="-2.08567 2.08567" actuatorfrcrange="-1.547 1.547"/>
+          <body name="RElbowRoll_link" quat="0.707105 -0.707108 0 0">
+            <inertial pos="-0.000206645 -0.0749538 5.58898e-05" quat="0.520545 0.522832 -0.476779 0.477871" mass="1.05536" diaginertia="0.00294822 0.00293633 0.000670487"/>
+            <joint name="RElbowRoll" pos="0 0 0" axis="0 0 1" range="0.0349066 1.54462" actuatorfrcrange="-1.532 1.532"/>
+            <geom size="0.036 0.08715" pos="0 -0.06485 0" quat="0.707105 0.707108 0 0" type="cylinder"/>
+            <geom size="0.04" pos="0 -0.116 0" quat="0.707105 0 0 -0.707108"/>
+            <body name="RWristYaw_link" pos="0 -0.05595 0" quat="0.707105 0.707108 0 0">
+              <inertial pos="0.000879999 0.00308 0.03434" quat="0.422432 0.617987 0.303847 0.589339" mass="0.18533" diaginertia="0.000139307 0.000131711 6.66137e-05"/>
+              <joint name="RWristYaw" pos="0 0 0" axis="0 0 1" range="-1.82387 1.82387" actuatorfrcrange="-0.4075 0.4075"/>
+            </body>
+          </body>
+        </body>
+      </body>
+    </body>
+  </worldbody>
+</mujoco>
