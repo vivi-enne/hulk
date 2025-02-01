@@ -1,0 +1,10 @@
+lz4==4.3.3
+mcap==1.2.1
+msgpack==1.1.0
+numpy==2.1.2
+packaging==24.1
+plotly==5.24.1
+polars==1.12.0
+tenacity==9.0.0
+tqdm==4.66.6
+zstandard==0.23.0
