@@ -1,22 +1,17 @@
 import datetime
-import numpy as np
-import polars as pl
 
-import polars.selectors as ps
 import click
+import cvxpy as cp
+import numpy as np
+import plotly.graph_objects as go
+import polars as pl
+import polars.selectors as ps
+from plotly.subplots import make_subplots
 from sklearn.base import BaseEstimator, RegressorMixin
 from sklearn.ensemble import (
     HistGradientBoostingRegressor,
-    RandomForestRegressor,
 )
 from sklearn.linear_model import Ridge
-from sklearn.neural_network import MLPRegressor
-from sklearn.metrics import mean_absolute_error
-from tqdm import tqdm
-from itertools import product
-import plotly.graph_objects as go
-from plotly.subplots import make_subplots
-import cvxpy as cp
 
 
 class LastSensordataRegressor(BaseEstimator, RegressorMixin):
@@ -38,7 +33,7 @@ def fit_constrained_ridge(X_train, y_train, alpha: float = 1.0) -> Ridge:
 
     w = cp.Variable(n_features)
     objective = cp.Minimize(
-        cp.sum_squares(X_train @ w - y_train) + alpha * cp.sum_squares(w)
+        cp.sum_squares(X_train @ w - y_train) + alpha * cp.sum_squares(w),
     )
     constraints = [cp.sum(w) == 1]
     problem = cp.Problem(objective, constraints)
@@ -69,18 +64,21 @@ def unnest_structs(df: pl.DataFrame, name: str, depth: int) -> pl.DataFrame:
 
             unnested = values.struct.unnest()
             renamed = unnested.rename(
-                {sub_col: f"{col}.{sub_col}" for sub_col in unnested.columns}
+                {sub_col: f"{col}.{sub_col}" for sub_col in unnested.columns},
             )
             new_columns.append(renamed)
         column = pl.concat(
-            [column.drop(struct_cols), *new_columns], how="horizontal"
+            [column.drop(struct_cols), *new_columns],
+            how="horizontal",
         )
 
     return pl.concat([df.drop(name), column], how="horizontal")
 
 
 def train_test_split(
-    df: pl.DataFrame, group_key: str, test_fraction: float = 0.2
+    df: pl.DataFrame,
+    group_key: str,
+    test_fraction: float = 0.2,
 ) -> tuple[pl.DataFrame, pl.DataFrame]:
     test_ids = df[group_key].unique().sample(fraction=test_fraction)
     train_df = df.filter(~pl.col(group_key).is_in(test_ids))
@@ -89,7 +87,9 @@ def train_test_split(
 
 
 def xy_split(
-    df: pl.DataFrame, feature_prefix: list[str], target_prefix: list[str]
+    df: pl.DataFrame,
+    feature_prefix: list[str],
+    target_prefix: list[str],
 ) -> tuple[pl.DataFrame, pl.DataFrame]:
     return (
         df.select([ps.starts_with(prefix) for prefix in feature_prefix]),
@@ -137,7 +137,7 @@ def filter_walk(df: pl.DataFrame) -> pl.DataFrame:
             pl.col("motion_command.Walk")
             .is_not_null()
             .rle_id()
-            .alias("chunk_id")
+            .alias("chunk_id"),
         )
         .filter(pl.col("motion_command.Walk").is_not_null())
         .select(~ps.starts_with("motion_command"))
@@ -153,7 +153,7 @@ def improve_over_baseline(
     baseline = LastSensordataRegressor()
     baseline_prediction = baseline.fit(X_train, y_train).predict(X_test)
     baseline_error = np.square(
-        baseline_prediction - y_test.to_numpy().flatten()
+        baseline_prediction - y_test.to_numpy().flatten(),
     )
     # model = fit_constrained_ridge(X_train.to_numpy(), y_train.to_numpy().flatten())
     # model = Ridge()
@@ -174,17 +174,26 @@ def fit_model(
     group_key: str,
 ) -> float:
     X_train, y_train = generate_fit_data(
-        X_train, y_train, k_history, k_horizon, group_key
+        X_train,
+        y_train,
+        k_history,
+        k_horizon,
+        group_key,
     )
     X_test, y_test = generate_fit_data(
-        X_test, y_test, k_history, k_horizon, group_key
+        X_test,
+        y_test,
+        k_history,
+        k_horizon,
+        group_key,
     )
     return improve_over_baseline(X_train, y_train, X_test, y_test)
 
 
 @click.command()
 @click.argument(
-    "parquet", type=click.Path(exists=True, dir_okay=False, readable=True)
+    "parquet",
+    type=click.Path(exists=True, dir_okay=False, readable=True),
 )
 def main(parquet: str):
     df = pl.read_parquet(parquet)
@@ -263,10 +272,18 @@ def main(parquet: str):
     k_history = 25
     k_horizon = 2
     X_train, y_train = generate_fit_data(
-        X_train, y_train, k_history, k_horizon, "chunk_id"
+        X_train,
+        y_train,
+        k_history,
+        k_horizon,
+        "chunk_id",
     )
     X_test, y_test = generate_fit_data(
-        X_test, y_test, k_history, k_horizon, "chunk_id"
+        X_test,
+        y_test,
+        k_history,
+        k_horizon,
+        "chunk_id",
     )
     model = HistGradientBoostingRegressor()
     # model = RandomForestRegressor()
@@ -278,7 +295,11 @@ def main(parquet: str):
 
     fig = make_subplots(rows=2, cols=1, shared_xaxes=True)
     fig.add_scatter(
-        y=prediction, mode="lines", name="Prediction", row=1, col=1
+        y=prediction,
+        mode="lines",
+        name="Prediction",
+        row=1,
+        col=1,
     )
     fig.add_scatter(y=baseline, mode="lines", name="Baseline", row=1, col=1)
     fig.add_scatter(
