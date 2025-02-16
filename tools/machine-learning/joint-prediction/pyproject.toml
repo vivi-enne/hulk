@@ -21,3 +21,6 @@ dependencies = [
 
 [tool.uv]
 dev-dependencies = ["ruff>=0.9.4"]
+
+[tool.pyright]
+typeCheckingMode = "basic"
