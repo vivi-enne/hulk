@@ -1220,9 +1220,9 @@
   },
   "behavior": {
     "optional_roles": [
-      "DefenderLeft",
       "DefenderRight",
       "StrikerSupporter",
+      "DefenderLeft",
       "MidfielderRight",
       "MidfielderLeft"
     ],
