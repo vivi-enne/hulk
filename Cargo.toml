@@ -51,6 +51,7 @@ members = [
   "crates/walking_engine",
   "crates/zed",
   "tools/annotato",
+  "tools/booster_camera_matrix_extractor",
   "tools/camera_matrix_extractor",
   "tools/depp",
   "tools/fanta",
