@@ -32,6 +32,7 @@ members = [
   "crates/hungarian_algorithm",
   "crates/kinematics",
   "crates/linear_algebra",
+  "crates/localization",
   "crates/motion",
   "crates/motionfile",
   "crates/object_detection",
@@ -163,6 +164,7 @@ lazy_static = "1.5.0"
 levenberg-marquardt = "0.15.0"
 libc = "0.2.169"
 linear_algebra = { path = "crates/linear_algebra" }
+localization = { path = "crates/localization" }
 log = "0.4.25"
 mcap = "0.15.0"
 mlua = { version = "0.10.3", features = ["luajit", "serialize", "vendored"] }
