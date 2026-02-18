@@ -1,8 +1,10 @@
-use core::num;
 use std::{collections::HashMap, fs::File, io::BufWriter};
 
 use color_eyre::Result;
-use nalgebra::{Isometry3, Point3, UnitQuaternion, Vector3};
+use coordinate_systems::Field;
+use linear_algebra::{
+    Framed, IntoFramed, Isometry3, Orientation3, Point3, Pose3, Vector3, vector,
+};
 use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha8Rng;
 use rand_distr::Distribution;
@@ -25,13 +27,13 @@ struct VisualizationStep {
 
 struct Observation {
     feature_id: u32,
-    position: Vector3<f32>,
+    position: Point3<Field>,
 }
 
 #[derive(Clone)]
 struct PoseParticle {
     id: u32,
-    pose: Isometry3<f32>,
+    pose: Pose3<Field>,
     map: HashMap<u32, LandmarkParticleSet>,
     weight: f32,
 }
@@ -40,7 +42,7 @@ impl PoseParticle {
     pub fn new(id: u32) -> Self {
         Self {
             id,
-            pose: Isometry3::identity(),
+            pose: Pose3::default(),
             map: HashMap::new(),
             weight: 1.0,
         }
@@ -72,7 +74,7 @@ impl FastSLAM3D {
 
 #[derive(Clone)]
 struct LandmarkParticle {
-    position: Vector3<f32>,
+    position: Point3<Field>,
 }
 
 #[derive(Clone)]
@@ -82,7 +84,7 @@ struct LandmarkParticleSet {
 
 impl LandmarkParticleSet {
     pub fn initialize_landmark_particle_filter(
-        pose: &Isometry3<f32>,
+        pose: Pose3<Field>,
         observation: &Observation,
         measurement_noise_std: f32,
         number_particles_per_landmark: usize,
@@ -93,14 +95,14 @@ impl LandmarkParticleSet {
         let particles = (0..number_particles_per_landmark)
             .map(|_| {
                 // Add noise in the Observation Frame (Range/Bearing implicitly) to represent initial uncertainty of landmark position
-                let noisy_observation = observation.position
-                    + Vector3::new(noise.sample(rng), noise.sample(rng), noise.sample(rng));
+                let noisy_observation = &observation.position
+                    + vector![noise.sample(rng), noise.sample(rng), noise.sample(rng)];
 
-                // Transform to World Frame
-                let world_pos = pose * Point3::from(noisy_observation);
-
+                // Transform to Field Frame
+                let field_position = pose.as_transform() * noisy_observation;
+                // TODO: with which orientation should that be initialized?
                 LandmarkParticle {
-                    position: world_pos.coords,
+                    position: field_position.inner.framed(),
                 }
             })
             .collect();
@@ -112,7 +114,7 @@ impl LandmarkParticleSet {
     /// If the landmark particles agree with the sensor reading, the likelihood is high.
     /// The corresponding PoseParticle weight is updated with this likelihood.
     pub fn update_and_resample_landmark_particles(
-        pose: &Isometry3<f32>,
+        pose: Pose3<Field>,
         landmark: &mut LandmarkParticleSet,
         observation: &Observation,
         measurement_noise_std: f32,
@@ -129,9 +131,10 @@ impl LandmarkParticleSet {
             .particles
             .iter()
             .map(|landmark_particle| {
-                // Predict observation: World -> Robot
-                let predicted_local = pose.inverse() * Point3::from(landmark_particle.position);
-                let error = observation.position - predicted_local.coords;
+                // Predict observation: Field -> Robot
+                let predicted_local =
+                    pose.as_transform::<Field>().inverse() * landmark_particle.position;
+                let error = observation.position.inner - predicted_local.inner;
 
                 // reweight based on Gaussian Likelihood
                 normalization_constant * (-0.5 * error.dot(&error) / variance).exp()
@@ -171,11 +174,11 @@ impl LandmarkParticleSet {
 
             // copy particle and add small jitter (to prevent particle collapse)
             let mut particle = landmark.particles[i].clone();
-            particle.position += Vector3::new(
+            particle.position += vector![
                 jitter_noise_distribution.sample(rng),
                 jitter_noise_distribution.sample(rng),
                 jitter_noise_distribution.sample(rng),
-            );
+            ];
             new_particles.push(particle);
             random_offset += step;
         }
@@ -196,7 +199,7 @@ impl ParticleCloud {
     /// Predictes movement by adding noise to create a cloud of possible new positions based on odometry
     pub fn predict_particles(
         particles: &mut Vec<PoseParticle>,
-        delta_odometry: Isometry3<f32>,
+        delta_odometry: Isometry3<Field, Field>,
         translation_noise_std: f32,
         rotation_noise_std: f32,
         rng: &mut ChaCha8Rng,
@@ -206,34 +209,31 @@ impl ParticleCloud {
         let rotation_noise_distribution = rand_distr::Normal::new(0.0, rotation_noise_std).unwrap();
 
         particles.iter_mut().for_each(|particle| {
-            let translation_noise = Vector3::new(
+            let translation_noise = vector![
                 translation_noise_distribution.sample(rng),
                 translation_noise_distribution.sample(rng),
                 translation_noise_distribution.sample(rng),
-            );
+            ];
 
-            let rotation_noise = Vector3::new(
+            let rotation_noise: Framed<Field, _> = vector![
                 rotation_noise_distribution.sample(rng),
                 rotation_noise_distribution.sample(rng),
                 rotation_noise_distribution.sample(rng),
-            );
+            ];
 
             let angle = rotation_noise.norm();
             let rot_noise_q = if angle > 1e-6 {
-                nalgebra::UnitQuaternion::from_axis_angle(
-                    &nalgebra::Unit::new_normalize(rotation_noise),
-                    angle,
-                )
+                Orientation3::new((rotation_noise.inner.normalize() * angle).framed())
             } else {
-                nalgebra::UnitQuaternion::identity()
+                Orientation3::default()
             };
 
-            let noisy_delta = Isometry3::from_parts(
-                (delta_odometry.translation.vector + translation_noise).into(),
-                delta_odometry.rotation * rot_noise_q,
+            let noisy_delta = Pose3::from_parts(
+                delta_odometry.translation() + translation_noise,
+                delta_odometry.rotation() * rot_noise_q,
             );
 
-            particle.pose = particle.pose * noisy_delta;
+            particle.pose = particle.pose.as_transform() * noisy_delta;
         });
     }
 
@@ -249,7 +249,7 @@ impl ParticleCloud {
             if let Some(landmark) = particle.map.get_mut(&observation.feature_id) {
                 // Update existing landmark particles
                 let likelihood = LandmarkParticleSet::update_and_resample_landmark_particles(
-                    &particle.pose,
+                    particle.pose,
                     landmark,
                     &observation,
                     measurement_noise_std,
@@ -259,7 +259,7 @@ impl ParticleCloud {
             } else {
                 // Initialize new landmark particles
                 let landmark = LandmarkParticleSet::initialize_landmark_particle_filter(
-                    &particle.pose,
+                    particle.pose,
                     &observation,
                     measurement_noise_std,
                     number_landmark_particles,
@@ -330,16 +330,16 @@ impl ParticleCloud {
         }
     }
 
-    pub fn estimate_pose(particles: &[PoseParticle]) -> Isometry3<f32> {
-        let mut position = Vector3::zeros();
+    pub fn estimate_pose(particles: &[PoseParticle]) -> Pose3<Field> {
+        let mut position = Vector3::<Field>::zeros();
         let mut sin_yaw = 0.0;
         let mut cos_yaw = 0.0;
         let mut total_weight = 0.0;
 
         for particle in particles {
-            position += particle.pose.translation.vector * particle.weight;
+            position.inner += particle.pose.inner.translation.vector * particle.weight;
 
-            let yaw = particle.pose.rotation.euler_angles().2;
+            let yaw = particle.pose.inner.rotation.euler_angles().2;
             sin_yaw += yaw.sin() * particle.weight;
             cos_yaw += yaw.cos() * particle.weight;
             total_weight += particle.weight;
@@ -352,8 +352,8 @@ impl ParticleCloud {
         }
 
         let yaw = sin_yaw.atan2(cos_yaw);
-        let rotation = nalgebra::UnitQuaternion::from_euler_angles(0.0, 0.0, yaw);
-        Isometry3::from_parts(position.into(), rotation)
+        let rotation = Orientation3::from_euler_angles(0.0, 0.0, yaw);
+        Pose3::from_parts(position.inner.into(), rotation)
     }
 }
 
@@ -379,21 +379,21 @@ fn main() {
 
     // 3D Landmark Positions (Helix pattern)
     let landmark_positions = vec![
-        Vector3::new(10.0, -2.0, 0.0),
-        Vector3::new(15.0, 10.0, 2.0),
-        Vector3::new(15.0, 15.0, 4.0),
-        Vector3::new(10.0, 20.0, 6.0),
-        Vector3::new(3.0, 15.0, 8.0),
-        Vector3::new(-5.0, 20.0, 6.0),
-        Vector3::new(-5.0, 5.0, 4.0),
-        Vector3::new(-10.0, 15.0, 2.0),
-        Vector3::new(0.0, 0.0, 10.0), // High central landmark
+        vector![10.0, -2.0, 0.0],
+        vector![15.0, 10.0, 2.0],
+        vector![15.0, 15.0, 4.0],
+        vector![10.0, 20.0, 6.0],
+        vector![3.0, 15.0, 8.0],
+        vector![-5.0, 20.0, 6.0],
+        vector![-5.0, 5.0, 4.0],
+        vector![-10.0, 15.0, 2.0],
+        vector![0.0, 0.0, 10.0], // High central landmark
     ];
 
     let mut particles = slam.particles.clone();
-    let mut true_robot_pose = Isometry3::identity();
+    let mut true_robot_pose = Isometry3::<_, Field, _>::identity();
     let mut history: Vec<VisualizationStep> = Vec::new();
-    let mut prev_est_pose = Vector3::zeros();
+    let mut prev_est_pose = Vector3::<Field>::zeros().inner;
     let mut step_count = 0;
 
     let bar = indicatif::ProgressBar::new((SIMULATION_TIME / DT) as u64);
@@ -410,9 +410,9 @@ fn main() {
         };
 
         // Create 3D motion command
-        let delta_trans = Vector3::new(v_forward * DT, 0.0, v_up * DT); // Robot frame: x=forward, z=up
-        let delta_rot = UnitQuaternion::from_euler_angles(0.0, 0.0, yaw_rate * DT);
-        let motion = Isometry3::from_parts(delta_trans.into(), delta_rot);
+        let delta_trans = vector![v_forward * DT, 0.0, v_up * DT]; // Robot frame: x=forward, z=up
+        let delta_rot = Orientation3::from_euler_angles(0.0, 0.0, yaw_rate * DT);
+        let motion = Isometry3::from_parts(delta_trans, delta_rot);
 
         // Update Truth
         true_robot_pose = true_robot_pose * motion;
@@ -431,10 +431,10 @@ fn main() {
             .iter()
             .enumerate()
             .map(|(id, lm)| {
-                let obs_pos = true_robot_pose.inverse() * Point3::from(*lm);
+                let obs_pos = true_robot_pose.inverse() * lm;
                 Observation {
                     feature_id: id as u32,
-                    position: obs_pos.coords,
+                    position: obs_pos.inner.into(),
                 }
             })
             .collect();
@@ -468,7 +468,7 @@ fn main() {
 
         // Estimate & Visualize
         let pose = ParticleCloud::estimate_pose(&particles);
-        let current_pos_vec = pose.translation.vector;
+        let current_pos_vec = pose.inner.translation.vector;
         let jump_dist = (current_pos_vec - prev_est_pose).norm();
         if jump_dist > 0.5 && time > 2.0 {
             println!(
@@ -483,9 +483,9 @@ fn main() {
             .iter()
             .map(|particle| {
                 (
-                    particle.pose.translation.x,
-                    particle.pose.translation.y,
-                    particle.pose.translation.z,
+                    particle.pose.inner.translation.x,
+                    particle.pose.inner.translation.y,
+                    particle.pose.inner.translation.z,
                 )
             })
             .collect();
@@ -497,10 +497,13 @@ fn main() {
                 p.map
                     .values()
                     .map(|landmark_set| {
-                        let sum: Vector3<f32> =
-                            landmark_set.particles.iter().map(|lp| lp.position).sum();
+                        let sum: Vector3<Field> = landmark_set
+                            .particles
+                            .iter()
+                            .map(|lp| lp.position.coords())
+                            .sum();
                         let mean = sum / (landmark_set.particles.len() as f32);
-                        (mean.x, mean.y, mean.z)
+                        (mean.x(), mean.y(), mean.z())
                     })
                     .collect()
             })
@@ -508,11 +511,15 @@ fn main() {
 
         history.push(VisualizationStep {
             robot_particles,
-            estimated_robot_pose: (pose.translation.x, pose.translation.y, pose.translation.z),
+            estimated_robot_pose: (
+                pose.inner.translation.x,
+                pose.inner.translation.y,
+                pose.inner.translation.z,
+            ),
             true_robot_pose: (
-                true_robot_pose.translation.x,
-                true_robot_pose.translation.y,
-                true_robot_pose.translation.z,
+                true_robot_pose.inner.translation.x,
+                true_robot_pose.inner.translation.y,
+                true_robot_pose.inner.translation.z,
             ),
             particle_landmarks,
             n_eff: current_n_eff,
@@ -521,7 +528,10 @@ fn main() {
     bar.finish();
 
     let data = VisualizeData {
-        true_landmarks: landmark_positions.iter().map(|l| (l.x, l.y, l.z)).collect(),
+        true_landmarks: landmark_positions
+            .iter()
+            .map(|landmark| (landmark.inner.x, landmark.inner.y, landmark.inner.z))
+            .collect(),
         history,
     };
 
