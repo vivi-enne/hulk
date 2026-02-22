@@ -1,0 +1,12 @@
+[package]
+name = "slam_frontend"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+homepage.workspace = true
+
+[dependencies]
+ndarray = { workspace = true }
+nalgebra = { workspace = true }
+ort = { workspace = true }
+color-eyre = { workspace = true }
