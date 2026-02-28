@@ -9,7 +9,7 @@ use ort::{
     value::Tensor,
 };
 
-use crate::feature_extraction::{FeatureDescriptorSet, FeatureExtractor, GrayscaleNCHW};
+use super::{FeatureDescriptorSet, FeatureExtractor, GrayscaleNCHW};
 
 pub struct XFeatExtractorParameters {
     xfeat_model_path: PathBuf,
