@@ -5,7 +5,7 @@ use ndarray::{Array1, Array2, Axis};
 use ort::{
     execution_providers::TensorRTExecutionProvider,
     inputs,
-    session::{builder::GraphOptimizationLevel, Session},
+    session::{Session, builder::GraphOptimizationLevel},
     value::Tensor,
 };
 

@@ -1,6 +1,11 @@
 // apex-solver pose-graph backend
 use apex_solver::{
-    ManifoldType, ProjectionFactor, core::problem::Problem, factors::{BetweenFactor, PriorFactor}, linalg::{LinearSolverType, SparseCholeskySolver}, manifold::se3::SE3, optimizer::levenberg_marquardt::{LevenbergMarquardt, LevenbergMarquardtConfig}
+    ManifoldType, ProjectionFactor,
+    core::problem::Problem,
+    factors::{BetweenFactor, PriorFactor},
+    linalg::{LinearSolverType, SparseCholeskySolver},
+    manifold::se3::SE3,
+    optimizer::levenberg_marquardt::{LevenbergMarquardt, LevenbergMarquardtConfig},
 };
 use color_eyre::Result;
 use nalgebra::{DVector, Point2, Point3};
@@ -66,18 +71,12 @@ impl Backend {
     /// Register a 3D landmark as a variable to be optimized
     pub fn add_landmark_variable(&mut self, landmark_id: u64, initial_position: Point3<f64>) {
         let var_name = format!("l{}", landmark_id);
-        
-        let dv = nalgebra::dvector![
-            initial_position.x,
-            initial_position.y,
-            initial_position.z
-        ];
+
+        let dv = nalgebra::dvector![initial_position.x, initial_position.y, initial_position.z];
 
         // Landmarks are typically optimized in standard 3D Euclidean space
-        self.initial_values.insert(
-            var_name,
-            (ManifoldType::Euclidean(3), dv),
-        );
+        self.initial_values
+            .insert(var_name, (ManifoldType::Euclidean(3), dv));
     }
 
     /// Add a projection constraint (Visual Measurement)

@@ -1,5 +1,5 @@
 [package]
-name = "localization"
+name = "slam"
 version = "0.1.0"
 edition = "2024"
 
@@ -15,9 +15,8 @@ rand_chacha = { workspace = true }
 rand_distr = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
-
-
 csv = "1.1"
-# For point cloud processing if you want to extract "fake" features from Hilti
 apex-solver = { workspace = true }
 kdtree = "0.7.0"
+ndarray = { workspace = true }
+ort = { workspace = true }

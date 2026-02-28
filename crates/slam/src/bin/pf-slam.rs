@@ -1,5 +1,3 @@
-mod hilti_dataloader;
-
 use std::{collections::HashMap, fs::File, io::BufWriter};
 
 use color_eyre::Result;

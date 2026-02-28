@@ -17,7 +17,10 @@ pub struct LandmarkMap {
 
 impl LandmarkMap {
     pub fn new() -> Self {
-        Self { landmarks: HashMap::new(), next_id: 0 }
+        Self {
+            landmarks: HashMap::new(),
+            next_id: 0,
+        }
     }
 
     pub fn add_landmark(&mut self, position: Point3<f64>) -> LandmarkId {
