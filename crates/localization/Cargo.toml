@@ -15,3 +15,9 @@ rand_chacha = { workspace = true }
 rand_distr = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
+
+
+csv = "1.1"
+# For point cloud processing if you want to extract "fake" features from Hilti
+apex-solver = { workspace = true }
+kdtree = "0.7.0"

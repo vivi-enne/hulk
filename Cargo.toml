@@ -81,12 +81,14 @@ homepage = "https://github.com/hulks/hulk"
 [workspace.dependencies]
 aliveness = { path = "crates/aliveness" }
 alsa = "0.9.1"
+apex-solver = { path = "/home/vivi/playground/apex-solver" }
 approx = "0.5.1"
 approx_derive = { path = "crates/approx_derive" }
 argument_parsers = { path = "crates/argument_parsers" }
 audio = { path = "crates/audio" }
 awaitgroup = "0.7.0"
 axum = { version = "0.8.4", features = ["ws"] }
+ball-tree = "0.5.2"
 ball_filter = { path = "crates/ball_filter" }
 base64 = "0.22.1"
 bat = { version = "0.25.0", default-features = false, features = [
@@ -147,6 +149,7 @@ geometry = { path = "crates/geometry" }
 gilrs = "0.11.0"
 glob = "0.3.2"
 hardware = { path = "crates/hardware" }
+hnsw_rs = "0.3.3"
 home = "=0.5.9"
 hsl_network = { path = "crates/hsl_network" }
 hsl_network_messages = { path = "crates/hsl_network_messages" }
