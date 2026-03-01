@@ -112,11 +112,12 @@ impl Backend {
     pub fn add_landmark_prior(&mut self, landmark_id: u64, position: Point3<f64>) {
         let var_name = format!("l{}", landmark_id);
         let dv = nalgebra::dvector![position.x, position.y, position.z];
-        
+
         // Add a strong weight by duplicating the factor (acts as a stiff anchor)
         for _ in 0..100 {
             let prior = PriorFactor { data: dv.clone() };
-            self.problem.add_residual_block(&[&var_name], Box::new(prior), None);
+            self.problem
+                .add_residual_block(&[&var_name], Box::new(prior), None);
         }
     }
 
