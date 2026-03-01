@@ -1,14 +1,17 @@
 // apex-solver pose-graph backend
 use apex_solver::{
-    ManifoldType, ProjectionFactor,
-    core::problem::Problem,
+    BundleAdjustment, ManifoldType, PinholeCamera, ProjectionFactor,
+    core::problem::{Problem, VariableEnum},
     factors::{BetweenFactor, PriorFactor},
-    linalg::{LinearSolverType, SparseCholeskySolver},
+    linalg::LinearSolverType,
     manifold::se3::SE3,
-    optimizer::levenberg_marquardt::{LevenbergMarquardt, LevenbergMarquardtConfig},
+    optimizer::{
+        SolverResult,
+        levenberg_marquardt::{LevenbergMarquardt, LevenbergMarquardtConfig},
+    },
 };
 use color_eyre::Result;
-use nalgebra::{DVector, Point2, Point3};
+use nalgebra::{DVector, Matrix2xX, Point3, Vector2};
 use std::collections::HashMap;
 
 /// A simple pose graph backend
@@ -34,16 +37,28 @@ impl Backend {
         let var_name = format!("x{}", id);
 
         // encode as [tx,ty,tz,qw,qx,qy,qz]
-        let dv = nalgebra::dvector![
-            pose.translation().x,
-            pose.translation().y,
-            pose.translation().z,
-            pose.rotation_so3().quaternion().w,
-            pose.rotation_so3().quaternion().i,
-            pose.rotation_so3().quaternion().j,
-            pose.rotation_so3().quaternion().k,
-        ];
+        // let dv = nalgebra::dvector![
+        //     pose.translation().x,
+        //     pose.translation().y,
+        //     pose.translation().z,
+        //     pose.rotation_so3().quaternion().w,
+        //     pose.rotation_so3().quaternion().i,
+        //     pose.rotation_so3().quaternion().j,
+        //     pose.rotation_so3().quaternion().k,
+        // ];
 
+        // // encode as [tx, ty, tz, qx, qy, qz, qw]
+        // let dv = nalgebra::dvector![
+        //     pose.translation().x,
+        //     pose.translation().y,
+        //     pose.translation().z,
+        //     pose.rotation_so3().quaternion().i, // x
+        //     pose.rotation_so3().quaternion().j, // y
+        //     pose.rotation_so3().quaternion().k, // z
+        //     pose.rotation_so3().quaternion().w, // w (scalar last)
+        // ];
+
+        let dv: DVector<f64> = pose.into();
         self.initial_values.insert(
             var_name.clone(),
             (apex_solver::ManifoldType::SE3, dv.clone()),
@@ -51,7 +66,8 @@ impl Backend {
 
         // add a weak prior on the first pose
         if id == 0 {
-            let prior = PriorFactor { data: pose.into() };
+            // let prior = PriorFactor { data: pose.into() };
+            let prior = PriorFactor { data: dv };
             self.problem
                 .add_residual_block(&[&var_name], Box::new(prior), None);
         }
@@ -75,8 +91,7 @@ impl Backend {
         let dv = nalgebra::dvector![initial_position.x, initial_position.y, initial_position.z];
 
         // Landmarks are typically optimized in standard 3D Euclidean space
-        self.initial_values
-            .insert(var_name, (ManifoldType::Euclidean(3), dv));
+        self.initial_values.insert(var_name, (ManifoldType::RN, dv));
     }
 
     /// Add a projection constraint (Visual Measurement)
@@ -84,14 +99,17 @@ impl Backend {
         &mut self,
         pose_id: u64,
         landmark_id: u64,
-        measurement: Point2<f64>,
-        intrinsics: CameraIntrinsics,
+        measurement: Vector2<f64>,
+        camera: PinholeCamera,
     ) {
         let pose_var = format!("x{}", pose_id);
         let lm_var = format!("l{}", landmark_id);
 
+        let dyn_measurement = Matrix2xX::from_columns(&[measurement]);
+
         // Initialize the native apex_solver ProjectionFactor
-        let factor = ProjectionFactor::new(measurement, intrinsics);
+        let factor: ProjectionFactor<PinholeCamera, BundleAdjustment> =
+            ProjectionFactor::new(dyn_measurement, camera);
 
         // Add to the problem graph connecting the specific pose and landmark
         self.problem.add_residual_block(
@@ -101,13 +119,15 @@ impl Backend {
         );
     }
 
-    pub fn optimize(&mut self) -> Result<()> {
+    pub fn optimize(&mut self) -> SolverResult<HashMap<String, VariableEnum>> {
         let config = LevenbergMarquardtConfig::new()
             .with_linear_solver_type(LinearSolverType::SparseCholesky)
             .with_max_iterations(50);
         let mut solver = LevenbergMarquardt::with_config(config);
 
-        solver.optimize(&self.problem, &self.initial_values)?;
-        Ok(())
+        let result = solver
+            .optimize(&self.problem, &self.initial_values)
+            .expect("SLAM solver did not find a solution");
+        result
     }
 }

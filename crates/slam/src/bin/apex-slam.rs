@@ -1,12 +1,10 @@
 use apex_solver::SE3;
 use color_eyre::Result;
-mod map;
-mod slam_backend;
 // mod frontend;
 
-use map::LandmarkMap;
 use nalgebra::{Isometry3, Point3, Vector3};
-use slam_backend::Backend;
+use slam::backend::map::LandmarkMap;
+use slam::backend::slam_backend::Backend;
 
 fn main() -> Result<()> {
     let mut backend = Backend::new();

@@ -135,10 +135,10 @@ fn main() -> Result<()> {
     for i in 0..=last_id {
         let var = format!("x{}", i);
         if let Some(opt) = result.parameters.get(&var) {
-            dbg!("Optimized {}: {:?}", var, opt);
+            // dbg!("Optimized {}: {:?}", var, opt);
 
             let translation = opt.to_vector();
-            dbg!("Translation: {:?}", translation.clone());
+            // dbg!("Translation: {:?}", translation.clone());
             let x = translation[0];
             let y = translation[1];
             let z = translation[2];
