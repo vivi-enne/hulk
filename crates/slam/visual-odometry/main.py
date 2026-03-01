@@ -37,12 +37,15 @@ def draw_matches(
 
 
 def play_sequence(sequence: KittiOdometrySequence) -> None:
-    vo = VisualOdometry(sequence.calibration.p0, sequence.calibration.p1)
+    vo = VisualOdometry(
+        sequence.calibration.p0, sequence.calibration.p1, "cuda"
+    )
     current = RigidTransform.identity()
 
     plt.ion()
     figure = plt.figure()
     axis = figure.add_subplot(projection="3d")
+
     trajectory = np.zeros((0, 3))
 
     for entry in sequence.iterate():
@@ -66,6 +69,7 @@ def play_sequence(sequence: KittiOdometrySequence) -> None:
         #     s=5,
         # )
         axis.plot(trajectory[:, 0], trajectory[:, 1], trajectory[:, 2])
+        axis.axis("equal")
 
         # axis.set_xlim(-5, 5)
         # axis.set_ylim(-5, 5)

@@ -210,7 +210,7 @@ proc-macro-error = "1.0.4"
 proc-macro2 = { version = "1.0.93", features = ["span-locations"] }
 projection = { path = "crates/projection" }
 proptest = "1.6.0"
-pyo3 = { version = "0.27.1", features = ["abi3-py313", "extension-module"] }
+pyo3 = { version = "0.27.1" }
 pyo3-async-runtimes = { version = "0.27.0", features = ["tokio-runtime"] }
 pyo3-log = "0.13.2"
 quote = "1.0.38"

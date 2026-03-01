@@ -6866,6 +6866,22 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "830b246a0e5f20af87141b25c173cd1b609bd7779a4617d6ec582abaf90870f3"
 
 [[package]]
+name = "numpy"
+version = "0.27.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7aac2e6a6e4468ffa092ad43c39b81c79196c2bb773b8db4085f695efe3bba17"
+dependencies = [
+ "libc",
+ "ndarray 0.16.1",
+ "num-complex",
+ "num-integer",
+ "num-traits",
+ "pyo3",
+ "pyo3-build-config",
+ "rustc-hash 2.1.1",
+]
+
+[[package]]
 name = "objc"
 version = "0.2.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -9542,11 +9558,15 @@ dependencies = [
  "color-eyre",
  "coordinate_systems",
  "csv",
+ "eframe",
+ "egui_plot",
+ "image",
  "indicatif",
  "kdtree",
  "linear_algebra",
  "nalgebra",
  "ndarray 0.16.1",
+ "numpy",
  "ordered-float 4.6.0",
  "ort",
  "pyo3",

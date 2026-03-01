@@ -8,6 +8,8 @@ from scipy.spatial.transform import RigidTransform, Rotation
 
 
 class XFeatModel:
+    dev: torch.device
+
     def to(self, device: torch.device) -> None: ...
 
     def detectAndCompute(
@@ -54,12 +56,24 @@ class VisualOdometry:
         self.right_calibration = right_calibration
         self.device = torch.device(device)
         self.xfeat_model = torch.hub.load(  # pyright: ignore[reportAttributeAccessIssue]
-            "verlab/accelerated_features", "XFeat", pretrained=True, top_k=128
+            "verlab/accelerated_features", "XFeat", pretrained=True, top_k=512
         )
+        self.xfeat_model.dev = self.device
         self.xfeat_model.to(self.device)
 
         self.previous_left_features = None
         self.previous_points_3d = None
+
+    def step_translation_quaternion(
+        self, left_image: np.ndarray, right_image: np.ndarray
+    ) -> tuple[np.ndarray, np.ndarray]:
+        transform = self.step(left_image, right_image)
+        return (
+            transform.translation.astype(np.float32),
+            transform.rotation.as_quat(
+                scalar_first=True, canonical=True
+            ).astype(np.float32),
+        )
 
     def step(
         self, left_image: np.ndarray, right_image: np.ndarray
@@ -93,7 +107,7 @@ class VisualOdometry:
             current_match_indices
         ]
         pose_update = self.solve_pose_update(
-            matched_point_cloud, point_cloud_image_points.numpy()
+            matched_point_cloud, point_cloud_image_points.cpu().numpy()
         )
 
         self.previous_points_3d = points_3d
@@ -118,14 +132,13 @@ class VisualOdometry:
         outputs = self.xfeat_model.detectAndCompute(image_tensor)
         return [ExtractedFeatures(**output) for output in outputs]
 
-    @torch.compile()
     @torch.inference_mode()
     def match(
         self,
         descriptors_a: torch.Tensor,
         descriptors_b: torch.Tensor,
         minimum_cosine_similarity: float = 0.82,
-    ) -> tuple[torch.Tensor, torch.Tensor]:
+    ) -> tuple[np.ndarray, np.ndarray]:
         similarity_matrix = torch.inner(descriptors_a, descriptors_b)
 
         maximum_similarity, match_indices_12 = similarity_matrix.max(dim=1)
@@ -145,7 +158,7 @@ class VisualOdometry:
         index1 = match_indices_12[valid_mask]
         index0 = index0[valid_mask]
 
-        return index0, index1
+        return index0.cpu().numpy(), index1.cpu().numpy()
 
     def triangulate_points(
         self,
@@ -156,8 +169,8 @@ class VisualOdometry:
             cv2.triangulatePoints(
                 self.left_calibration,
                 self.right_calibration,
-                left_features.keypoints.numpy().T,
-                right_features.keypoints.numpy().T,
+                left_features.keypoints.cpu().numpy().T,
+                right_features.keypoints.cpu().numpy().T,
             )
         ).T
         non_singular_mask = np.abs(points_4d[:, -1]) > 1e-6

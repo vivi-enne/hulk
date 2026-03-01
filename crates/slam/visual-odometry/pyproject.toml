@@ -3,7 +3,7 @@ name = "visual-odometry"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
-requires-python = ">=3.13"
+requires-python = ">=3.14"
 dependencies = [
     "click>=8.3.1",
     "matplotlib>=3.10.8",
@@ -11,12 +11,20 @@ dependencies = [
     "pyside6>=6.10.2",
     "scipy>=1.17.1",
     "tk>=0.1.0",
-    "torch>=2.10.0",
+    "torch>=2.9.0",
     "tqdm>=4.67.3",
 ]
 
+[tool.uv]
+index-strategy = "unsafe-best-match"
+
 [tool.uv.sources]
 visual-odometry = { workspace = true }
+torch = { index = "pytorch-rocm" }
+
+[[tool.uv.index]]
+name = "pytorch-rocm"
+url = "https://download.pytorch.org/whl/rocm6.4"
 
 [build-system]
 requires = ["hatchling"]

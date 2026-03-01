@@ -15,7 +15,7 @@ booster = { workspace = true, features = ["pyo3"] }
 color-eyre = { workspace = true }
 futures-util = { workspace = true }
 log = { workspace = true }
-pyo3 = { workspace = true }
+pyo3 = { workspace = true, features = ["abi3-py313", "extension-module"] }
 pyo3-async-runtimes = { workspace = true }
 pyo3-log = { workspace = true }
 ros2 = { workspace = true, features = ["pyo3"] }
