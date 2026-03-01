@@ -43,7 +43,9 @@ fn main() -> Result<()> {
     }
 
     // optimize pose graph
-    backend.optimize()?;
+    let result = backend.optimize();
+    dbg!(result.parameters);
+    dbg!(result.status);
     println!("Optimization complete!");
     Ok(())
 }

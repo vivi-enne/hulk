@@ -9538,6 +9538,7 @@ name = "slam"
 version = "0.1.0"
 dependencies = [
  "apex-solver",
+ "clap",
  "color-eyre",
  "coordinate_systems",
  "csv",
@@ -9546,6 +9547,7 @@ dependencies = [
  "linear_algebra",
  "nalgebra",
  "ndarray 0.16.1",
+ "ordered-float 4.6.0",
  "ort",
  "pyo3",
  "rand 0.9.2",

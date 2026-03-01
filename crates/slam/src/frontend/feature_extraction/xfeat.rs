@@ -86,7 +86,7 @@ impl FeatureDescriptorSet for XFeatureSet {
         todo!()
     }
 
-    fn match_keypoints(&self, other: &Self) -> f64 {
+    fn match_keypoints(&self, _other: &Self) -> f64 {
         todo!()
     }
 }

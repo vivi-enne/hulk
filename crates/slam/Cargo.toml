@@ -3,21 +3,28 @@ name = "slam"
 version = "0.1.0"
 edition = "2024"
 
+[[examples]]
+name = "kitti"
+path = "examples/kitti/main.rs"
+
 [dependencies]
+apex-solver = { workspace = true }
 color-eyre = { workspace = true }
 coordinate_systems = { workspace = true }
-
+csv = "1.1"
 indicatif = { workspace = true }
+kdtree = "0.7.0"
 linear_algebra = { workspace = true }
 nalgebra = { workspace = true }
+ndarray = { workspace = true }
+ordered-float = { workspace = true }
+ort = { workspace = true }
+pyo3 = { workspace = true, features = ["auto-initialize"]}
 rand = { workspace = true }
 rand_chacha = { workspace = true }
 rand_distr = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
-csv = "1.1"
-apex-solver = { workspace = true }
-kdtree = "0.7.0"
-ndarray = { workspace = true }
-ort = { workspace = true }
-pyo3 = { workspace = true, features = ["auto-initialize"]}
+
+[dev-dependencies]
+clap = { workspace = true }

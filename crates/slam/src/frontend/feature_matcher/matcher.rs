@@ -1,3 +1,5 @@
+use ordered_float::OrderedFloat;
+
 use crate::frontend::feature_matcher::matching::CosineSimilarity;
 
 #[derive(Debug)]
@@ -75,7 +77,7 @@ impl DistanceTable {
             if value < threshold {
                 return None;
             }
-            Some(value)
+            Some(OrderedFloat(value))
         })
     }
 
@@ -85,7 +87,7 @@ impl DistanceTable {
             if value < threshold {
                 return None;
             }
-            Some(value)
+            Some(OrderedFloat(value))
         })
     }
 }

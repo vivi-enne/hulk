@@ -34,10 +34,11 @@ impl<Descriptor: Copy> GlobalLandmarkMap for LandmarkMap<Descriptor> {
             .iter()
             .zip(&self.descriptors)
             .filter(|(keypoint, _)| {
+                let keypoint = transform * *keypoint;
                 let depth = keypoint.z();
                 keypoint.x().abs() <= depth * fovx_tan && keypoint.y().abs() <= depth * fovy_tan
             })
-            .copied()
+            .map(|(a, b)| (*a, *b))
             .unzip();
 
         LandmarkMap {
