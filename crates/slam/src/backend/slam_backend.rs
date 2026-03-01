@@ -47,17 +47,6 @@ impl Backend {
         //     pose.rotation_so3().quaternion().k,
         // ];
 
-        // // encode as [tx, ty, tz, qx, qy, qz, qw]
-        // let dv = nalgebra::dvector![
-        //     pose.translation().x,
-        //     pose.translation().y,
-        //     pose.translation().z,
-        //     pose.rotation_so3().quaternion().i, // x
-        //     pose.rotation_so3().quaternion().j, // y
-        //     pose.rotation_so3().quaternion().k, // z
-        //     pose.rotation_so3().quaternion().w, // w (scalar last)
-        // ];
-
         let dv: DVector<f64> = pose.into();
         self.initial_values.insert(
             var_name.clone(),
@@ -65,12 +54,12 @@ impl Backend {
         );
 
         // add a weak prior on the first pose
-        if id == 0 {
-            // let prior = PriorFactor { data: pose.into() };
-            let prior = PriorFactor { data: dv };
-            self.problem
-                .add_residual_block(&[&var_name], Box::new(prior), None);
-        }
+        // if id == 0 {
+        //     // let prior = PriorFactor { data: pose.into() };
+        //     let prior = PriorFactor { data: dv };
+        //     self.problem
+        //         .add_residual_block(&[&var_name], Box::new(prior), None);
+        // }
 
         id
     }
@@ -117,6 +106,18 @@ impl Backend {
             Box::new(factor),
             None, // Optional robust loss function (e.g., Huber) can go here
         );
+    }
+
+    /// Anchors a landmark heavily to fix the Gauge Freedom (Coordinate Frame)
+    pub fn add_landmark_prior(&mut self, landmark_id: u64, position: Point3<f64>) {
+        let var_name = format!("l{}", landmark_id);
+        let dv = nalgebra::dvector![position.x, position.y, position.z];
+        
+        // Add a strong weight by duplicating the factor (acts as a stiff anchor)
+        for _ in 0..100 {
+            let prior = PriorFactor { data: dv.clone() };
+            self.problem.add_residual_block(&[&var_name], Box::new(prior), None);
+        }
     }
 
     pub fn optimize(&mut self) -> SolverResult<HashMap<String, VariableEnum>> {

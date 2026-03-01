@@ -65,6 +65,10 @@ mod tests {
         // assert!(result.convergence_info, "Optimization failed to converge!");
         println!("Optimization successful.");
     }
+
+
+
+    
     #[test]
     fn test_circular_trajectory_bundle_adjustment() {
         let mut backend = Backend::new();
@@ -94,6 +98,13 @@ mod tests {
                 );
                 let lm_id = map.add_landmark(noisy_pos);
                 backend.add_landmark_variable(lm_id, noisy_pos);
+
+                // Anchor the first 3 landmarks to their ground truth positions.
+                // This locks the X, Y, Z, Pitch, Yaw, Roll, and Scale of the entire universe!
+                let len = gt_landmarks.len();
+                if len == 1 {
+                    backend.add_landmark_prior(lm_id, gt_pos);
+                }
             }
         }
 
@@ -143,7 +154,7 @@ mod tests {
                     UnitQuaternion::identity(),
                 );
 
-                // backend.add_between(prev_id, pose_id, noisy_rel_motion);
+                backend.add_between(prev_id, pose_id, noisy_rel_motion);
             }
 
             // 5. Simulate Visual Measurements (Projections)
