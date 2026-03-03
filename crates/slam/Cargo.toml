@@ -15,16 +15,17 @@ nalgebra = { workspace = true }
 ndarray = { workspace = true }
 ordered-float = { workspace = true }
 ort = { workspace = true }
-pyo3 = { workspace = true, features = ["auto-initialize", "abi3-py314"]}
+pyo3 = { workspace = true, features = ["auto-initialize", "abi3-py314"] }
 rand = { workspace = true }
 rand_chacha = { workspace = true }
 rand_distr = { workspace = true }
+rayon = "1.11.0"
 serde = { workspace = true }
 serde_json = { workspace = true }
 
 [dev-dependencies]
 clap = { workspace = true }
-image = { workspace = true, features = ["png"] }
 eframe = { workspace = true }
-numpy = "0.27.0"
 egui_plot = { workspace = true }
+image = { workspace = true, features = ["png"] }
+numpy = "0.27.0"

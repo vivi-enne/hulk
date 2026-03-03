@@ -1,3 +1,3 @@
 pub mod map;
 pub mod slam_backend;
-pub mod smart_matcher;
+pub mod weighted_factor;

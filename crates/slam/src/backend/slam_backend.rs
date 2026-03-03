@@ -1,7 +1,10 @@
 // apex-solver pose-graph backend
 use apex_solver::{
     BundleAdjustment, ManifoldType, PinholeCamera, ProjectionFactor,
-    core::problem::{Problem, VariableEnum},
+    core::{
+        loss_functions::{HuberLoss, LossFunction},
+        problem::{Problem, VariableEnum},
+    },
     factors::{BetweenFactor, PriorFactor},
     linalg::LinearSolverType,
     manifold::se3::SE3,
@@ -13,6 +16,8 @@ use apex_solver::{
 use color_eyre::Result;
 use nalgebra::{DVector, Matrix2xX, Point3, Vector2};
 use std::collections::HashMap;
+
+use crate::backend::weighted_factor::WeightedFactor;
 
 /// A simple pose graph backend
 pub struct Backend {
@@ -36,17 +41,6 @@ impl Backend {
 
         let var_name = format!("x{}", id);
 
-        // encode as [tx,ty,tz,qw,qx,qy,qz]
-        // let dv = nalgebra::dvector![
-        //     pose.translation().x,
-        //     pose.translation().y,
-        //     pose.translation().z,
-        //     pose.rotation_so3().quaternion().w,
-        //     pose.rotation_so3().quaternion().i,
-        //     pose.rotation_so3().quaternion().j,
-        //     pose.rotation_so3().quaternion().k,
-        // ];
-
         let dv: DVector<f64> = pose.into();
         self.initial_values.insert(
             var_name.clone(),
@@ -54,12 +48,21 @@ impl Backend {
         );
 
         // add a weak prior on the first pose
-        // if id == 0 {
-        //     // let prior = PriorFactor { data: pose.into() };
-        //     let prior = PriorFactor { data: dv };
-        //     self.problem
-        //         .add_residual_block(&[&var_name], Box::new(prior), None);
-        // }
+        if id == 0 {
+            // let prior = PriorFactor { data: pose.into() };
+            let prior = PriorFactor { data: dv.clone() };
+            // self.problem
+            //     .add_residual_block(&[&var_name], Box::new(prior), None);
+
+            // 1000.0 weight acts as an immovable anchor
+            let hard_anchor = WeightedFactor {
+                inner: prior,
+                weight: 1000.0,
+            };
+
+            self.problem
+                .add_residual_block(&[&var_name], Box::new(hard_anchor), None);
+        }
 
         id
     }
@@ -100,11 +103,20 @@ impl Backend {
         let factor: ProjectionFactor<PinholeCamera, BundleAdjustment> =
             ProjectionFactor::new(dyn_measurement, camera);
 
-        // Add to the problem graph connecting the specific pose and landmark
+        let weight = 0.01; //0.01; // Dramatically reduces the pull of pixel errors
+        let weighted_factor = WeightedFactor {
+            inner: factor,
+            weight,
+        };
+
+        // Scale the Huber threshold to match the new weighted residual
+        let huber =
+            Box::new(HuberLoss::new(1.0 * weight).expect("Huber loss initialization failed"));
+
         self.problem.add_residual_block(
             &[&pose_var, &lm_var],
-            Box::new(factor),
-            None, // Optional robust loss function (e.g., Huber) can go here
+            Box::new(weighted_factor),
+            Some(huber),
         );
     }
 
