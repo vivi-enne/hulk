@@ -13,7 +13,6 @@ use apex_solver::{
         levenberg_marquardt::{LevenbergMarquardt, LevenbergMarquardtConfig},
     },
 };
-use color_eyre::Result;
 use nalgebra::{DVector, Matrix2xX, Point3, Vector2};
 use std::collections::HashMap;
 

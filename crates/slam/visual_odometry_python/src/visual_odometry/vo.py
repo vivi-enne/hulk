@@ -4,7 +4,12 @@ from dataclasses import dataclass
 import cv2
 import numpy as np
 import torch
-from scipy.spatial.transform import RigidTransform, Rotation
+
+# from .landmark_map import (
+#     LocalLandmarkView,
+#     MapLandmarkView,
+#     filter_landmarks_in_view,
+# )
 
 
 class XFeatModel:
@@ -37,6 +42,54 @@ class ExtractedFeatures:
         )
 
 
+class LandmarkCandidateTracker:
+    minimum_consecutive_frames: int
+    feature_track_counts: None | np.ndarray
+
+    def __init__(self, minimum_consecutive_frames: int = 3) -> None:
+        self.minimum_consecutive_frames = minimum_consecutive_frames
+        self.feature_track_counts = None
+
+    def update(
+        self,
+        number_of_current_features: int,
+        current_three_dimensional_points: np.ndarray,
+        current_descriptors: np.ndarray,
+        previous_match_indices: np.ndarray,
+        current_match_indices: np.ndarray,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        if self.feature_track_counts is None:
+            self.feature_track_counts = np.ones(
+                number_of_current_features, dtype=np.int32
+            )
+            return (
+                np.empty((0, 3), dtype=np.float32),
+                np.empty((0, current_descriptors.shape[1]), dtype=np.float32),
+            )
+
+        current_track_counts = np.ones(
+            number_of_current_features, dtype=np.int32
+        )
+
+        if len(previous_match_indices) > 0:
+            current_track_counts[current_match_indices] = (
+                self.feature_track_counts[previous_match_indices] + 1
+            )
+
+        mature_feature_mask = (
+            current_track_counts == self.minimum_consecutive_frames
+        )
+
+        proposed_three_dimensional_points = current_three_dimensional_points[
+            mature_feature_mask
+        ]
+        proposed_descriptors = current_descriptors[mature_feature_mask]
+
+        self.feature_track_counts = current_track_counts
+
+        return proposed_three_dimensional_points, proposed_descriptors
+
+
 class VisualOdometry:
     left_calibration: np.ndarray
     right_calibration: np.ndarray
@@ -45,11 +98,18 @@ class VisualOdometry:
 
     previous_left_features: None | ExtractedFeatures
     previous_points_3d: None | np.ndarray
+    candidate_tracker: LandmarkCandidateTracker
+
+    # fovx_tan: torch.Tensor
+    # fovy_tan: torch.Tensor
 
     def __init__(
         self,
         left_calibration: np.ndarray,
         right_calibration: np.ndarray,
+        # fovx: float,
+        # fovy: float,
+        minimum_consecutive_frames_to_spawn_landmark: int = 5,
         device: str | int | torch.device = "cpu",
     ) -> None:
         self.left_calibration = left_calibration
@@ -63,21 +123,37 @@ class VisualOdometry:
 
         self.previous_left_features = None
         self.previous_points_3d = None
-
-    def step_translation_quaternion(
-        self, left_image: np.ndarray, right_image: np.ndarray
-    ) -> tuple[np.ndarray, np.ndarray]:
-        transform = self.step(left_image, right_image)
-        return (
-            transform.translation.astype(np.float32),
-            transform.rotation.as_quat(
-                scalar_first=True, canonical=True
-            ).astype(np.float32),
+        self.candidate_tracker = LandmarkCandidateTracker(
+            minimum_consecutive_frames_to_spawn_landmark
         )
 
+        # self.fovx_tan = torch.scalar_tensor(fovx / 2.0, device=self.device)
+        # self.fovy_tan = torch.scalar_tensor(fovy / 2.0, device=self.device)
+
+    def setup_on_first_step(
+        self, left_features: ExtractedFeatures, points_3d: np.ndarray
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        self.previous_left_features = left_features
+        self.previous_points_3d = points_3d
+        proposed_points, proposed_descriptors = self.candidate_tracker.update(
+            number_of_current_features=len(points_3d),
+            current_three_dimensional_points=points_3d,
+            current_descriptors=left_features.descriptors.cpu().numpy(),
+            previous_match_indices=np.empty(0, dtype=np.int32),
+            current_match_indices=np.empty(0, dtype=np.int32),
+        )
+        return np.zeros(3), np.zeros(3), proposed_points, proposed_descriptors
+
     def step(
-        self, left_image: np.ndarray, right_image: np.ndarray
-    ) -> RigidTransform:
+        self,
+        left_image: np.ndarray,
+        right_image: np.ndarray,
+        # latest_map_to_camera: RigidTransform,
+        # landmarks: MapLandmarkView,
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+        # view = filter_landmarks_in_view(
+        #     self.fovx_tan, self.fovy_tan, latest_map_to_camera, landmarks
+        # )
         left_features, right_features = self.extract_features(
             [left_image, right_image]
         )
@@ -94,9 +170,7 @@ class VisualOdometry:
             self.previous_left_features is None
             or self.previous_points_3d is None
         ):
-            self.previous_left_features = left_features
-            self.previous_points_3d = points_3d
-            return RigidTransform.identity()
+            return self.setup_on_first_step(left_features, points_3d)
 
         landmark_match_indices, current_match_indices = self.match(
             self.previous_left_features.descriptors, left_features.descriptors
@@ -109,14 +183,28 @@ class VisualOdometry:
         pose_update = self.solve_pose_update(
             matched_point_cloud, point_cloud_image_points.cpu().numpy()
         )
+        translation, rotation = (
+            pose_update
+            if pose_update is not None
+            else (np.zeros(3), np.zeros(3))
+        )
+
+        proposed_points, proposed_descriptors = self.candidate_tracker.update(
+            number_of_current_features=len(points_3d),
+            current_three_dimensional_points=points_3d,
+            current_descriptors=left_features.descriptors.cpu().numpy(),
+            previous_match_indices=landmark_match_indices,
+            current_match_indices=current_match_indices,
+        )
 
         self.previous_points_3d = points_3d
         self.previous_left_features = left_features
 
         return (
-            pose_update
-            if pose_update is not None
-            else RigidTransform.identity()
+            translation.astype(np.float32),
+            rotation.astype(np.float32),
+            proposed_points,
+            proposed_descriptors,
         )
 
     def extract_features(
@@ -186,7 +274,7 @@ class VisualOdometry:
 
     def solve_pose_update(
         self, previous_points_3d: np.ndarray, current_points_2d: np.ndarray
-    ) -> None | RigidTransform:
+    ) -> None | tuple[np.ndarray, np.ndarray]:
         if len(current_points_2d) < 4:
             return None
 
@@ -199,7 +287,7 @@ class VisualOdometry:
         if not success:
             return None
 
-        return RigidTransform.from_components(
+        return (
             translation_vector.squeeze(1),
-            Rotation.from_rotvec(rotation_vector.squeeze(1)),
+            rotation_vector.squeeze(1),
         )

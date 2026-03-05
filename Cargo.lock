@@ -9550,23 +9550,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0c790de23124f9ab44544d7ac05d60440adc586479ce501c1d6d7da3cd8c9cf5"
 
 [[package]]
-name = "slam"
+name = "slam_backend"
 version = "0.1.0"
 dependencies = [
  "apex-solver",
- "clap",
  "color-eyre",
  "coordinate_systems",
  "csv",
- "eframe",
- "egui_plot",
- "image",
  "indicatif",
  "kdtree",
  "linear_algebra",
  "nalgebra",
  "ndarray 0.16.1",
- "numpy",
  "ordered-float 4.6.0",
  "ort",
  "pyo3",
@@ -9576,6 +9571,17 @@ dependencies = [
  "rayon",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "slam_test"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "eframe",
+ "egui_plot",
+ "image",
+ "numpy",
 ]
 
 [[package]]
@@ -11035,6 +11041,17 @@ dependencies = [
  "repository",
  "source_analyzer",
  "tokio",
+]
+
+[[package]]
+name = "visual_odometry_rust"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "eframe",
+ "egui_plot",
+ "image",
+ "numpy",
 ]
 
 [[package]]

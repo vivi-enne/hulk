@@ -1,12 +1,9 @@
 use color_eyre::eyre::{Context, Result};
-use coordinate_systems::SlamMap;
+use coordinate_systems::{NewSlamMap, PreviousSlamMap, SlamMap};
 use linear_algebra::{IntoFramed, Isometry3, vector};
 use nalgebra::{Quaternion, UnitQuaternion};
-use ndarray::{Array2, ArrayView3};
-use numpy::{
-    PyReadonlyArray1,
-    convert::{IntoPyArray, ToPyArray},
-};
+use ndarray::{Array2, Array3};
+use numpy::{PyReadonlyArray1, PyReadonlyArray2, convert::IntoPyArray};
 use pyo3::{
     Py, PyAny, PyResult, Python,
     types::{PyAnyMethods, PyModule},
@@ -31,6 +28,7 @@ impl VisualOdometry {
             let object = vo_class.call1((
                 left_calibration.into_pyarray(py),
                 right_calibration.into_pyarray(py),
+                5,
                 "cuda",
             ))?;
 
@@ -43,23 +41,27 @@ impl VisualOdometry {
 
     pub fn step(
         &self,
-        left_image: ArrayView3<u8>,
-        right_image: ArrayView3<u8>,
-    ) -> Result<Isometry3<SlamMap, SlamMap>> {
+        left_image: Array3<u8>,
+        right_image: Array3<u8>,
+    ) -> Result<Isometry3<PreviousSlamMap, SlamMap>> {
         Python::attach::<_, PyResult<_>>(|py| {
             let bound = self.object.bind(py);
             let output = bound.call_method1(
-                "step_translation_quaternion",
-                (left_image.to_pyarray(py), right_image.to_pyarray(py)),
+                "step",
+                (left_image.into_pyarray(py), right_image.into_pyarray(py)),
             )?;
 
-            let (translation, quaternion): (PyReadonlyArray1<f32>, PyReadonlyArray1<f32>) =
-                output.extract()?;
+            let (translation, quaternion, _proposed_points, _proposed_descriptors): (
+                PyReadonlyArray1<f32>,
+                PyReadonlyArray1<f32>,
+                PyReadonlyArray2<f32>,
+                PyReadonlyArray2<f32>,
+            ) = output.extract()?;
 
             let translation = translation.as_array();
             let quaternion = quaternion.as_array();
 
-            let update = Isometry3::from_parts(
+            let update = Isometry3::<PreviousSlamMap, SlamMap>::from_parts(
                 vector![translation[0], translation[1], translation[2],],
                 UnitQuaternion::from_quaternion(Quaternion::new(
                     quaternion[0],

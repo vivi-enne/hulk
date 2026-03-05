@@ -2,14 +2,10 @@ from pathlib import Path
 
 import click
 import cv2
-import matplotlib as mpl
-import matplotlib.pyplot as plt
 import numpy as np
-from scipy.spatial.transform import RigidTransform
+from tqdm import tqdm
 from visual_odometry.dataset import KittiOdometryDataset, KittiOdometrySequence
 from visual_odometry.vo import VisualOdometry
-
-mpl.use("QtAgg")
 
 
 def draw_matches(
@@ -36,9 +32,27 @@ def draw_matches(
     return image
 
 
-def play_sequence(sequence: KittiOdometrySequence) -> None:
+def play_sequence_headless(sequence: KittiOdometrySequence) -> None:
     vo = VisualOdometry(
-        sequence.calibration.p0, sequence.calibration.p1, "cuda"
+        left_calibration=sequence.calibration.p0,
+        right_calibration=sequence.calibration.p1,
+        device="cuda",
+    )
+    for entry in tqdm(sequence.iterate()):
+        _, _, proposed_points, _ = vo.step(entry.left, entry.right)
+        print(f"proposed {len(proposed_points)} points")
+
+
+def play_sequence(sequence: KittiOdometrySequence) -> None:
+    import matplotlib as mpl
+    import matplotlib.pyplot as plt
+
+    mpl.use("QtAgg")
+
+    vo = VisualOdometry(
+        left_calibration=sequence.calibration.p0,
+        right_calibration=sequence.calibration.p1,
+        device="cuda",
     )
     current = RigidTransform.identity()
 
@@ -56,7 +70,8 @@ def play_sequence(sequence: KittiOdometrySequence) -> None:
             while cv2.waitKey() != ord(" "):
                 pass
 
-        update = vo.step(entry.left, entry.right)
+        update, proposed_points, _ = vo.step(entry.left, entry.right)
+        print(f"proposed {len(proposed_points)} points")
         current = current * update
 
         trajectory = np.concat([trajectory, current.translation.reshape(1, 3)])
@@ -91,11 +106,15 @@ def play_sequence(sequence: KittiOdometrySequence) -> None:
 
 
 @click.command()
-@click.argument("dataset-folder", type=click.Path(path_type=Path))
-def main(dataset_folder: Path):
-    dataset = KittiOdometryDataset(dataset_folder)
-    sequence = dataset.load("00")
-    play_sequence(sequence)
+@click.argument("kitti-sequence", type=click.Path(path_type=Path))
+@click.option("--headless", is_flag=True, type=click.BOOL)
+def main(*, kitti_sequence: Path, headless: bool):
+    dataset = KittiOdometryDataset(kitti_sequence.parent)
+    sequence = dataset.load(kitti_sequence.name)
+    if headless:
+        play_sequence_headless(sequence)
+    else:
+        play_sequence(sequence)
 
 
 if __name__ == "__main__":

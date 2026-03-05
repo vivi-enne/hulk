@@ -1,0 +1,19 @@
+[project]
+name = "visual-odometry"
+version = "0.1.0"
+description = "Add your description here"
+requires-python = "==3.10.*"
+dependencies = [
+    "click>=8.3.1",
+    "opencv-contrib-python>=4.13.0.92",
+    "warp-lang>=1.11.1",
+    "scipy",
+    "tqdm>=4.67.3",
+    # "matplotlib>=3.10.8",
+    # "pyside6>=6.10.2",
+    # "tk>=0.1.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

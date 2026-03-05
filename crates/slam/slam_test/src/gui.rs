@@ -5,12 +5,11 @@ use coordinate_systems::SlamMap;
 use eframe::{
     App, CreationContext, NativeOptions,
     egui::{
-        CentralPanel, ColorImage, Context, Key, TextureHandle, TextureOptions, Ui,
-        load::SizedTexture,
+        CentralPanel, ColorImage, Context, TextureHandle, TextureOptions, Ui, load::SizedTexture,
     },
 };
 use egui_plot::{Line, Plot, PlotPoint, PlotPoints};
-use linear_algebra::{Isometry3, Pose3};
+use linear_algebra::{IntoFramed, Isometry3, Pose3};
 use ndarray::ArrayView3;
 
 use crate::{dataset::KittiOdometrySequence, visual_odometry::VisualOdometry};
@@ -25,7 +24,7 @@ pub struct VisualOdometryGui {
 struct PreviousState {
     left_image: TextureHandle,
     right_image: TextureHandle,
-    poses: Vec<Isometry3<SlamMap, SlamMap>>,
+    poses: Vec<Pose3<SlamMap>>,
 }
 
 impl VisualOdometryGui {
@@ -56,19 +55,18 @@ impl VisualOdometryGui {
         self.next_index += 1;
         let left_image = load_to_image(ctx, "left_image", next.left_image.view());
         let right_image = load_to_image(ctx, "right_image", next.right_image.view());
-        let update = self
-            .vo
-            .step(next.left_image.view(), next.right_image.view())?;
+        let update = self.vo.step(next.left_image, next.right_image)?;
 
         self.state = match self.state.take() {
             None => Some(PreviousState {
                 left_image,
                 right_image,
-                poses: vec![Isometry3::default()],
+                poses: vec![Pose3::default()],
             }),
             Some(mut state) => {
                 let last = state.poses.last().unwrap();
-                state.poses.push(last * update);
+                let next = last.as_transform() * update;
+                state.poses.push(next.as_pose());
                 state.left_image = left_image;
                 state.right_image = right_image;
                 Some(state)
@@ -85,7 +83,9 @@ impl App for VisualOdometryGui {
             // if (is_pressed || self.state.is_none()) && self.next_index < self.sequence.len() {
             if self.next_index < self.sequence.len() {
                 if let Err(error) = self.make_vo_step(ctx) {
-                    ui.label(error.to_string());
+                    for error in error.chain() {
+                        ui.label(error.to_string());
+                    }
                 }
             }
 
@@ -103,7 +103,7 @@ impl App for VisualOdometryGui {
     }
 }
 
-pub fn show_poses_plot(ui: &mut Ui, poses: &[Isometry3<SlamMap, SlamMap>]) {
+pub fn show_poses_plot(ui: &mut Ui, poses: &[Pose3<SlamMap>]) {
     Plot::new("pose-plot").data_aspect(1.0).show(ui, |ui| {
         ui.line(Line::new(
             "poses",
@@ -111,7 +111,7 @@ pub fn show_poses_plot(ui: &mut Ui, poses: &[Isometry3<SlamMap, SlamMap>]) {
                 poses
                     .iter()
                     .map(|pose| {
-                        let translation = pose.translation();
+                        let translation = pose.position();
                         PlotPoint::new(translation.x(), -translation.z())
                     })
                     .collect(),

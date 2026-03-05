@@ -1,0 +1,11 @@
+[package]
+name = "visual_odometry_rust"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+clap = { workspace = true }
+eframe = { workspace = true }
+egui_plot = { workspace = true }
+image = { workspace = true, features = ["png"] }
+numpy = "0.27.0"

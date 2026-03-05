@@ -1,5 +1,5 @@
 [package]
-name = "slam"
+name = "slam_backend"
 version = "0.1.0"
 edition = "2024"
 
@@ -22,10 +22,3 @@ rand_distr = { workspace = true }
 rayon = "1.11.0"
 serde = { workspace = true }
 serde_json = { workspace = true }
-
-[dev-dependencies]
-clap = { workspace = true }
-eframe = { workspace = true }
-egui_plot = { workspace = true }
-image = { workspace = true, features = ["png"] }
-numpy = "0.27.0"

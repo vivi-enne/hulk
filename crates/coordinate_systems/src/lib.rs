@@ -67,8 +67,12 @@ generate_coordinate_system!(
     /// Origin: center of the field
     /// X axis pointing towards the opponent goal
     Field,
-    /// 3D coordinate system ,
+    /// 3D coordinate system for the SlamMap in the previous step
+    PreviousSlamMap,
+    /// 3D coordinate system for the current SlamMap,
     SlamMap,
+    /// 3D coordinate system for the SlamMap in the previous step
+    NewSlamMap,
     /// 3D Intrinsic coordinate system of the camera.
     ///
     /// Origin: center of the camera model
