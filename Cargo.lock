@@ -9578,10 +9578,15 @@ name = "slam_test"
 version = "0.1.0"
 dependencies = [
  "clap",
+ "color-eyre",
+ "coordinate_systems",
  "eframe",
  "egui_plot",
  "image",
- "numpy",
+ "indicatif",
+ "linear_algebra",
+ "ndarray 0.16.1",
+ "visual_odometry_rust",
 ]
 
 [[package]]
@@ -11047,11 +11052,14 @@ dependencies = [
 name = "visual_odometry_rust"
 version = "0.1.0"
 dependencies = [
- "clap",
- "eframe",
- "egui_plot",
+ "coordinate_systems",
  "image",
+ "linear_algebra",
+ "ndarray 0.16.1",
  "numpy",
+ "ort",
+ "pyo3",
+ "thiserror 2.0.18",
 ]
 
 [[package]]

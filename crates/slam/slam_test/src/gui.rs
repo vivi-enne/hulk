@@ -1,5 +1,3 @@
-use std::time::Duration;
-
 use color_eyre::eyre::Result;
 use coordinate_systems::SlamMap;
 use eframe::{
@@ -9,42 +7,46 @@ use eframe::{
     },
 };
 use egui_plot::{Line, Plot, PlotPoint, PlotPoints};
-use linear_algebra::{IntoFramed, Isometry3, Pose3};
-use ndarray::ArrayView3;
+use linear_algebra::{IntoTransform, Pose3};
+use ndarray::{ArrayView3, s};
+use visual_odometry_rust::VisualOdometryPipeline;
 
-use crate::{dataset::KittiOdometrySequence, visual_odometry::VisualOdometry};
+use crate::dataset::KittiOdometrySequence;
 
 pub struct VisualOdometryGui {
     sequence: KittiOdometrySequence,
-    vo: VisualOdometry,
+    vo: VisualOdometryPipeline,
     next_index: usize,
     state: Option<PreviousState>,
 }
 
 struct PreviousState {
+    time: f32,
     left_image: TextureHandle,
     right_image: TextureHandle,
     poses: Vec<Pose3<SlamMap>>,
 }
 
 impl VisualOdometryGui {
-    pub fn start(sequence: KittiOdometrySequence) -> eframe::Result<()> {
+    pub fn start(
+        sequence: KittiOdometrySequence,
+        pipeline: VisualOdometryPipeline,
+    ) -> eframe::Result<()> {
         eframe::run_native(
             "Visual Odometry",
             NativeOptions::default(),
-            Box::new(|cc| Ok(Box::new(VisualOdometryGui::new(cc, sequence)))),
+            Box::new(|cc| Ok(Box::new(VisualOdometryGui::new(cc, sequence, pipeline)))),
         )
     }
 
-    fn new(cc: &CreationContext, sequence: KittiOdometrySequence) -> Self {
-        let vo = VisualOdometry::initialize(
-            sequence.calibration.p0.clone(),
-            sequence.calibration.p1.clone(),
-        )
-        .expect("failed to initialize VisualOdometry");
+    fn new(
+        _cc: &CreationContext,
+        sequence: KittiOdometrySequence,
+        pipeline: VisualOdometryPipeline,
+    ) -> Self {
         Self {
             sequence,
-            vo,
+            vo: pipeline,
             next_index: 0,
             state: None,
         }
@@ -55,10 +57,18 @@ impl VisualOdometryGui {
         self.next_index += 1;
         let left_image = load_to_image(ctx, "left_image", next.left_image.view());
         let right_image = load_to_image(ctx, "right_image", next.right_image.view());
-        let update = self.vo.step(next.left_image, next.right_image)?;
+        let update = self
+            .vo
+            .step(
+                next.left_image.view().slice(s![.., .., 0]),
+                next.right_image.view().slice(s![.., .., 0]),
+            )?
+            .inverse()
+            .framed_transform::<SlamMap, SlamMap>();
 
         self.state = match self.state.take() {
             None => Some(PreviousState {
+                time: next.time,
                 left_image,
                 right_image,
                 poses: vec![Pose3::default()],
@@ -91,6 +101,7 @@ impl App for VisualOdometryGui {
 
             if let Some(state) = &self.state {
                 ui.vertical(|ui| {
+                    ui.label(format!("{}s", state.time));
                     ui.horizontal(|ui| {
                         ui.image(SizedTexture::from_handle(&state.left_image));
                         ui.image(SizedTexture::from_handle(&state.right_image));
@@ -112,7 +123,7 @@ pub fn show_poses_plot(ui: &mut Ui, poses: &[Pose3<SlamMap>]) {
                     .iter()
                     .map(|pose| {
                         let translation = pose.position();
-                        PlotPoint::new(translation.x(), -translation.z())
+                        PlotPoint::new(translation.x(), translation.z())
                     })
                     .collect(),
             ),

@@ -1,3 +1,3 @@
-from .vo import VisualOdometry
+from .matcher import VisualOdometryMatcher
 
-__all__ = ["VisualOdometry"]
+__all__ = ["VisualOdometryMatcher"]
