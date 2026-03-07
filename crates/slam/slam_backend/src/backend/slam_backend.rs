@@ -66,13 +66,21 @@ impl Backend {
         id
     }
 
-    pub fn add_between(&mut self, i: u64, j: u64, relative: SE3) {
+    pub fn add_between(&mut self, i: u64, j: u64, relative: SE3, weight: f64) {
         let from = format!("x{}", i);
         let to = format!("x{}", j);
 
         let factor = BetweenFactor::<SE3>::new(relative);
+        // self.problem
+        //     .add_residual_block(&[&from, &to], Box::new(factor), None);
+
+        // Use the WeightedFactor wrapper
+        let weighted = WeightedFactor {
+            inner: factor,
+            weight,
+        };
         self.problem
-            .add_residual_block(&[&from, &to], Box::new(factor), None);
+            .add_residual_block(&[&from, &to], Box::new(weighted), None);
     }
 
     /// Register a 3D landmark as a variable to be optimized
@@ -92,6 +100,7 @@ impl Backend {
         landmark_id: u64,
         measurement: Vector2<f64>,
         camera: PinholeCamera,
+        weight: f64,
     ) {
         let pose_var = format!("x{}", pose_id);
         let lm_var = format!("l{}", landmark_id);
@@ -102,15 +111,13 @@ impl Backend {
         let factor: ProjectionFactor<PinholeCamera, BundleAdjustment> =
             ProjectionFactor::new(dyn_measurement, camera);
 
-        let weight = 0.01; //0.01; // Dramatically reduces the pull of pixel errors
         let weighted_factor = WeightedFactor {
             inner: factor,
             weight,
         };
 
         // Scale the Huber threshold to match the new weighted residual
-        let huber =
-            Box::new(HuberLoss::new(1.0 * weight).expect("Huber loss initialization failed"));
+        let huber = Box::new(HuberLoss::new(2.0).expect("Huber loss initialization failed"));
 
         self.problem.add_residual_block(
             &[&pose_var, &lm_var],
@@ -130,6 +137,26 @@ impl Backend {
             self.problem
                 .add_residual_block(&[&var_name], Box::new(prior), None);
         }
+    }
+    /// Adds a weak prior to prevent singular matrices for distant, unconstrained landmarks
+    pub fn add_weak_landmark_prior(
+        &mut self,
+        landmark_id: u64,
+        position: Point3<f64>,
+        weight: f64,
+    ) {
+        let var_name = format!("l{}", landmark_id);
+        let dv = nalgebra::dvector![position.x, position.y, position.z];
+
+        // We use your WeightedFactor wrapper to make this constraint very loose
+        let prior = PriorFactor { data: dv };
+        let weighted_prior = WeightedFactor {
+            inner: prior,
+            weight,
+        };
+
+        self.problem
+            .add_residual_block(&[&var_name], Box::new(weighted_prior), None);
     }
 
     pub fn optimize(&mut self) -> SolverResult<HashMap<String, VariableEnum>> {

@@ -11,10 +11,11 @@ use apex_solver::{
     optimizer::SolverResult,
 };
 use color_eyre::Result;
-use nalgebra::{Const, Isometry3, OPoint, Point3, Vector3};
+use nalgebra::{Const, Isometry3, OPoint, Point3, Point4, Vector2, Vector3};
 use rand::Rng;
 use rand::SeedableRng;
 use rand_chacha::ChaCha8Rng;
+use rand_distr::{Distribution, Normal};
 use serde::Serialize;
 use slam_backend::backend::{map::LandmarkMap, slam_backend::Backend};
 
@@ -51,24 +52,22 @@ fn main() -> Result<()> {
     let camera = PinholeCamera::new(pinhole, distortion)?;
 
     let mut true_poses = BTreeMap::new();
-    // let mut true_landmarks = BTreeMap::new();
 
     let mut rng = ChaCha8Rng::seed_from_u64(42);
     let threshold = 0.1;
 
-    // 1. Create a "Cloud" of True Landmarks
-    let true_landmarks = generate_true_landmarks(50, &mut rng);
+    let true_landmarks = generate_true_landmarks(150, &mut rng);
 
     dbg!(&true_landmarks);
 
-    let x = 2.0;
+    let x = 5.0;
     let y = 0.0;
     let z = 0.0; // Upward movement
     let true_iso = Isometry3::translation(x, y, z);
 
     // First pose acts as our perfect anchor (Zero-state)
-    let current_guess_t_cw = true_iso.inverse().clone();
-    let pose_id = backend.add_pose(SE3::from_isometry(current_guess_t_cw.clone()));
+    let mut current_guess_t_cw = true_iso.inverse().clone();
+    let mut pose_id = backend.add_pose(SE3::from_isometry(current_guess_t_cw.clone()));
     true_poses.insert(pose_id, Point3::from(true_iso.translation.vector));
 
     let mut prev_true_t_cw = true_iso.inverse();
@@ -87,28 +86,66 @@ fn main() -> Result<()> {
     )?;
 
     // 2. Spiral Trajectory Simulation
-    for i in 0..200 {
-        let t = i as f64 * 0.2;
-        let x = t.cos() * 2.0;
-        let y = t.sin() * 2.0;
-        let z = t * 0.5; // Upward movement
+    let total_steps = 200;
+    for i in 1..total_steps {
+        // let t = i as f64 * 0.2;
+        // let x = t.cos() * 2.0;
+        // let y = t.sin() * 2.0;
+        // let z = t * 0.5; // Upward movement
 
-        let true_iso = Isometry3::translation(x, y, z);
+        // Create a full circle (2 * PI) over the 200 steps
+        let t = (i as f64) * (2.0 * std::f64::consts::PI / (total_steps - 20) as f64);
 
-        //// start working
-        let t_cw = true_iso.inverse();
-        let pose_id = backend.add_pose(SE3::from_isometry(t_cw.clone()));
+        // Radius of 5.0 meters, flat on the Z-plane
+        let x = t.cos() * 5.0;
+        let y = t.sin() * 5.0;
+        let z = 0.0;
+
+        // To make the camera "look" around the room, we also rotate it
+        // to face tangent to the circle
+        let rotation =
+            nalgebra::UnitQuaternion::from_euler_angles(0.0, t + std::f64::consts::FRAC_PI_2, 0.0);
+        let translation = nalgebra::Translation3::new(x, y, z);
+        let true_iso = Isometry3::from_parts(translation, rotation);
+
+        let true_t_cw = true_iso.inverse();
+
+        // Odometry between T_cw frames
+        let true_relative_delta = prev_true_t_cw.inverse() * true_t_cw.clone();
+
+        let trans_std = 0.1; // 1cm standard deviation
+        let rot_std = 0.005; // ~0.05 degree standard deviation
+        let trans_dist = Normal::new(0.0, trans_std)?;
+        let rot_dist = Normal::new(0.0, rot_std)?;
+
+        let noisy_delta =
+            apply_gaussian_noise_to_isometry(true_relative_delta, &trans_dist, &rot_dist, &mut rng);
+
+        // WEIGHT: 1 / variance
+        let odom_sigma = 0.02;
+        let odom_weight = 1.0 / (odom_sigma * odom_sigma); // Weight = 2500.0
+
+        let px_sigma = 1.0;
+        let px_weight = 1.0 / (px_sigma * px_sigma); // Weight = 1.0
+
+        // accumulate the noisy delta to get our realistic initial guess
+        current_guess_t_cw = prev_guess_t_cw * noisy_delta.clone();
+
+        // Feed noisy guess to the solver
+        pose_id = backend.add_pose(SE3::from_isometry(current_guess_t_cw.clone()));
+
+        backend.add_between(
+            prev_id,
+            pose_id,
+            SE3::from_isometry(noisy_delta),
+            odom_weight,
+        );
+
         true_poses.insert(pose_id, Point3::from(true_iso.translation.vector));
 
-        if i > 0 {
-            // Odometry between T_cw frames
-            let relative_delta = prev_true_t_cw.inverse() * t_cw.clone();
-            backend.add_between(prev_id, pose_id, SE3::from_isometry(relative_delta));
-        }
-
-        prev_true_t_cw = t_cw;
+        prev_true_t_cw = true_t_cw;
+        prev_guess_t_cw = current_guess_t_cw;
         prev_id = pose_id;
-
 
         process_landmarks_for_pose(
             &true_landmarks,
@@ -154,23 +191,41 @@ fn process_landmarks_for_pose(
     rng: &mut ChaCha8Rng,
 ) -> Result<()> {
     let mut frame_landmarks = Vec::new();
+    let px_weight = 1.0;
+
     for (id, &true_landmark_position) in landmarks {
         let local_pt = camera_isometry.inverse() * true_landmark_position;
-        if local_pt.z > 0.5 && local_pt.z < 15.0 {
+        if local_pt.z > 0.5 && local_pt.z < 20.0 {
             let uv = camera.project(&local_pt.coords)?;
             let desc = vec![*id as f32; 32];
+
+            // ADD PIXEL NOISE
+            let pixel_dist = Normal::new(0.0, 5.0)?; // 0.5 pixel std dev
+            let noisy_uv = uv + Vector2::new(pixel_dist.sample(rng), pixel_dist.sample(rng));
 
             let landmark_id = match map.find_match(&desc, threshold) {
                 Some(m_id) => m_id,
                 None => {
-                    let noisy_pt = true_landmark_position
-                        + Vector3::new(rng.random_range(-0.2..0.2), 0.0, 0.0);
-                    map.add_landmark(noisy_pt, desc);
-                    backend.add_landmark_variable(*id, noisy_pt);
+                    // Instead of global noise, add small noise to the LOCAL coordinates
+                    let local_pt = camera_isometry.inverse() * true_landmark_position;
+                    let noisy_local = local_pt
+                        + Vector3::new(
+                            rng.random_range(-0.02..0.02),
+                            rng.random_range(-0.02..0.02),
+                            rng.random_range(-0.02..0.02),
+                        );
+
+                    // Transform back to global for the backend
+                    let noisy_global = camera_isometry * noisy_local;
+
+                    map.add_landmark(noisy_global, desc);
+                    backend.add_landmark_variable(*id, noisy_global);
+                    backend.add_weak_landmark_prior(*id, noisy_global, 0.001);
                     *id
                 }
             };
-            backend.add_projection(pose_id, landmark_id, uv, camera.clone());
+
+            backend.add_projection(pose_id, landmark_id, noisy_uv, camera.clone(), px_weight);
             frame_landmarks.push(landmark_id);
         }
     }
@@ -205,6 +260,7 @@ fn extract_and_save_result(
             }
         } else if name.starts_with('l') {
             let id: u64 = name[1..].parse()?;
+            // Only exports landmarks that were successfully added to the solver
             if let (VariableEnum::Rn(rn), Some(tp)) = (var_enum, true_landmarks.get(&id)) {
                 let op = rn.value.data();
                 landmarks_out.push(LandmarkStep {
@@ -223,4 +279,42 @@ fn extract_and_save_result(
     let file = File::create(path)?;
     serde_json::to_writer(BufWriter::new(file), &output)?;
     Ok(())
+}
+
+fn apply_noise_to_isometry(
+    isometry: Isometry3<f64>,
+    translation_std: f64,
+    rotation_std: f64,
+    rng: &mut impl Rng,
+) -> Isometry3<f64> {
+    let translation = Vector3::new(
+        rng.random_range(-translation_std..translation_std),
+        rng.random_range(-translation_std..translation_std),
+        rng.random_range(-translation_std..translation_std),
+    );
+    let rotation = nalgebra::UnitQuaternion::from_euler_angles(
+        rng.random_range(-rotation_std..rotation_std),
+        rng.random_range(-rotation_std..rotation_std),
+        rng.random_range(-rotation_std..rotation_std),
+    );
+    isometry * Isometry3::from_parts(translation.into(), rotation)
+}
+
+fn apply_gaussian_noise_to_isometry(
+    isometry: Isometry3<f64>,
+    translation_distribution: &Normal<f64>,
+    rotation_distribution: &Normal<f64>,
+    rng: &mut impl Rng,
+) -> Isometry3<f64> {
+    let translation = Vector3::new(
+        translation_distribution.sample(rng),
+        translation_distribution.sample(rng),
+        translation_distribution.sample(rng),
+    );
+    let rotation = nalgebra::UnitQuaternion::from_euler_angles(
+        rotation_distribution.sample(rng),
+        rotation_distribution.sample(rng),
+        rotation_distribution.sample(rng),
+    );
+    isometry * Isometry3::from_parts(translation.into(), rotation)
 }
