@@ -8,14 +8,15 @@ use apex_solver::{
     CameraModel, LieGroup, PinholeCamera, SE3,
     camera_models::{DistortionModel, PinholeParams},
     core::problem::VariableEnum,
+    optimizer::SolverResult,
 };
 use color_eyre::Result;
-use nalgebra::{Isometry3, Point3, Vector3};
+use nalgebra::{Const, Isometry3, OPoint, Point3, Vector3};
 use rand::Rng;
 use rand::SeedableRng;
 use rand_chacha::ChaCha8Rng;
 use serde::Serialize;
-use slam::backend::{map::LandmarkMap, slam_backend::Backend};
+use slam_backend::backend::{map::LandmarkMap, slam_backend::Backend};
 
 #[derive(Serialize, Debug)]
 struct PoseStep {
@@ -25,7 +26,6 @@ struct PoseStep {
 
 #[derive(Serialize, Debug)]
 struct OutputData {
-    // This provides the "history" key your plotting file expects
     history: Vec<PoseStep>,
 }
 
@@ -51,25 +51,40 @@ fn main() -> Result<()> {
     let camera = PinholeCamera::new(pinhole, distortion)?;
 
     let mut true_poses = BTreeMap::new();
-    let mut true_landmarks = BTreeMap::new();
+    // let mut true_landmarks = BTreeMap::new();
 
     let mut rng = ChaCha8Rng::seed_from_u64(42);
     let threshold = 0.1;
 
     // 1. Create a "Cloud" of True Landmarks
-    for i in 0..100 {
-        let pt = Point3::new(
-            rng.random_range(-10.0..10.0),
-            rng.random_range(-10.0..10.0),
-            rng.random_range(0.0..20.0),
-        );
-        true_landmarks.insert(i as u64, pt);
-    }
+    let true_landmarks = generate_true_landmarks(50, &mut rng);
+
     dbg!(&true_landmarks);
 
-    let mut prev_true_t_cw: Option<Isometry3<f64>> = None;
-    let mut prev_guess_t_cw: Option<Isometry3<f64>> = None;
-    let mut prev_id: Option<u64> = None;
+    let x = 2.0;
+    let y = 0.0;
+    let z = 0.0; // Upward movement
+    let true_iso = Isometry3::translation(x, y, z);
+
+    // First pose acts as our perfect anchor (Zero-state)
+    let current_guess_t_cw = true_iso.inverse().clone();
+    let pose_id = backend.add_pose(SE3::from_isometry(current_guess_t_cw.clone()));
+    true_poses.insert(pose_id, Point3::from(true_iso.translation.vector));
+
+    let mut prev_true_t_cw = true_iso.inverse();
+    let mut prev_guess_t_cw = current_guess_t_cw;
+    let mut prev_id = pose_id;
+
+    process_landmarks_for_pose(
+        &true_landmarks,
+        &true_iso,
+        &camera,
+        &mut map,
+        &mut backend,
+        pose_id,
+        threshold,
+        &mut rng,
+    )?;
 
     // 2. Spiral Trajectory Simulation
     for i in 0..200 {
@@ -79,105 +94,96 @@ fn main() -> Result<()> {
         let z = t * 0.5; // Upward movement
 
         let true_iso = Isometry3::translation(x, y, z);
-        let true_t_cw = true_iso.inverse();
 
-        let current_guess_t_cw;
-        let pose_id;
-
-        // let pose_id = backend.add_pose(SE3::from_isometry(t_cw.clone()));
-        // true_poses.insert(pose_id, Point3::from(true_iso.translation.vector));
-
-        // // Add Odometry constraint expecting T_wc variables
-        // if let (Some(p_t_wc), Some(p_id)) = (&prev_t_wc, prev_id) {
-        //     // Relative motion: T_prev^{-1} * T_curr
-        //     let relative_delta = p_t_wc.inverse() * true_iso.clone();
-        //     backend.add_between(p_id, pose_id, SE3::from_isometry(relative_delta));
-        // }
-        // prev_t_wc = Some(true_iso.clone());
-        // prev_id = Some(pose_id);
-        // Odometry between T_cw frames
-        if let (Some(p_true_t_cw), Some(p_guess_t_cw), Some(p_id)) =
-            (&prev_true_t_cw, &prev_guess_t_cw, prev_id)
-        {
-            let true_delta = p_true_t_cw.inverse() * true_t_cw.clone();
-
-            // 2. Inject realistic Gaussian noise (translation and small rotation)
-            let noise_scale = 0.01;
-            let t_noise = Vector3::new(
-                rng.random_range(-noise_scale..noise_scale),
-                rng.random_range(-noise_scale..noise_scale),
-                rng.random_range(-noise_scale..noise_scale),
-            );
-
-            let axis = Vector3::new(
-                rng.random_range(-1.0..1.0),
-                rng.random_range(-1.0..1.0),
-                rng.random_range(-1.0..1.0),
-            )
-            .normalize();
-            let angle = rng.random_range(-0.02..0.02);
-            let r_noise = nalgebra::UnitQuaternion::from_axis_angle(
-                &nalgebra::Unit::new_normalize(axis),
-                angle,
-            );
-
-            let noise_iso = Isometry3::from_parts(t_noise.into(), r_noise);
-
-            // Apply the noise to the true relative motion
-            let noisy_delta = true_delta * noise_iso;
-
-            // 3. Accumulate the noisy delta to get our realistic initial guess
-            current_guess_t_cw = p_guess_t_cw * noisy_delta.clone();
-
-            // 4. Feed the noisy guess to the solver
-            pose_id = backend.add_pose(SE3::from_isometry(current_guess_t_cw.clone()));
-
-            // 5. Provide the noisy odometry measurement as the BetweenFactor
-            backend.add_between(p_id, pose_id, SE3::from_isometry(noisy_delta));
-        } else {
-            // First pose acts as our perfect anchor (Zero-state)
-            current_guess_t_cw = true_t_cw.clone();
-            pose_id = backend.add_pose(SE3::from_isometry(current_guess_t_cw.clone()));
-        }
+        //// start working
+        let t_cw = true_iso.inverse();
+        let pose_id = backend.add_pose(SE3::from_isometry(t_cw.clone()));
         true_poses.insert(pose_id, Point3::from(true_iso.translation.vector));
 
-        prev_true_t_cw = Some(true_t_cw.clone());
-        prev_guess_t_cw = Some(current_guess_t_cw);
-        prev_id = Some(pose_id);
-
-        // prev_t_cw = Some(t_cw);
-        // prev_id = Some(pose_id);
-
-        let mut frame_landmarks = Vec::new();
-        for (id, &pt) in &true_landmarks {
-            // dbg!(id);
-            let local_pt = true_iso.inverse() * pt;
-            if local_pt.z > 0.5 && local_pt.z < 15.0 {
-                let uv = camera.project(&local_pt.coords)?;
-                let desc = vec![*id as f32; 32];
-
-                let landmark_id = match map.find_match(&desc, threshold) {
-                    Some(m_id) => m_id,
-                    None => {
-                        let noisy_pt = pt + Vector3::new(rng.random_range(-0.2..0.2), 0.0, 0.0);
-                        map.add_landmark(noisy_pt, desc);
-                        backend.add_landmark_variable(*id, noisy_pt);
-                        *id
-                    }
-                };
-                // dbg!(pose_id, landmark_id);
-                backend.add_projection(pose_id, landmark_id, uv, camera.clone());
-                frame_landmarks.push(landmark_id);
-            } else {
-                // dbg!(id, pt, local_pt);
-            }
+        if i > 0 {
+            // Odometry between T_cw frames
+            let relative_delta = prev_true_t_cw.inverse() * t_cw.clone();
+            backend.add_between(prev_id, pose_id, SE3::from_isometry(relative_delta));
         }
-        // dbg!(frame_landmarks);
+
+        prev_true_t_cw = t_cw;
+        prev_id = pose_id;
+
+
+        process_landmarks_for_pose(
+            &true_landmarks,
+            &true_iso,
+            &camera,
+            &mut map,
+            &mut backend,
+            pose_id,
+            threshold,
+            &mut rng,
+        )?;
     }
 
     let result = backend.optimize();
 
-    // 3. Extraction with Landmarks
+    let path = "apex_pose_graph.json";
+    extract_and_save_result(result, true_poses, true_landmarks, path)?;
+
+    Ok(())
+}
+
+fn generate_true_landmarks(count: usize, rng: &mut impl Rng) -> BTreeMap<u64, Point3<f64>> {
+    (0..count as u64)
+        .map(|i| {
+            let pt = Point3::new(
+                rng.random_range(-10.0..10.0),
+                rng.random_range(-10.0..10.0),
+                rng.random_range(0.0..20.0),
+            );
+            (i, pt)
+        })
+        .collect()
+}
+
+fn process_landmarks_for_pose(
+    landmarks: &BTreeMap<u64, Point3<f64>>,
+    camera_isometry: &Isometry3<f64>,
+    camera: &PinholeCamera,
+    map: &mut LandmarkMap,
+    backend: &mut Backend,
+    pose_id: u64,
+    threshold: f32,
+    rng: &mut ChaCha8Rng,
+) -> Result<()> {
+    let mut frame_landmarks = Vec::new();
+    for (id, &true_landmark_position) in landmarks {
+        let local_pt = camera_isometry.inverse() * true_landmark_position;
+        if local_pt.z > 0.5 && local_pt.z < 15.0 {
+            let uv = camera.project(&local_pt.coords)?;
+            let desc = vec![*id as f32; 32];
+
+            let landmark_id = match map.find_match(&desc, threshold) {
+                Some(m_id) => m_id,
+                None => {
+                    let noisy_pt = true_landmark_position
+                        + Vector3::new(rng.random_range(-0.2..0.2), 0.0, 0.0);
+                    map.add_landmark(noisy_pt, desc);
+                    backend.add_landmark_variable(*id, noisy_pt);
+                    *id
+                }
+            };
+            backend.add_projection(pose_id, landmark_id, uv, camera.clone());
+            frame_landmarks.push(landmark_id);
+        }
+    }
+
+    Ok(())
+}
+
+fn extract_and_save_result(
+    result: SolverResult<HashMap<String, VariableEnum>>,
+    true_poses: BTreeMap<u64, OPoint<f64, Const<3>>>,
+    true_landmarks: BTreeMap<u64, OPoint<f64, Const<3>>>,
+    path: &str,
+) -> Result<()> {
     let mut history = Vec::new();
     let mut landmarks_out = Vec::new();
 
@@ -210,18 +216,11 @@ fn main() -> Result<()> {
         }
     }
 
-    dbg!(landmarks_out.clone());
     history.sort_by_key(|x| x.0);
     let final_history: Vec<PoseStep> = history.into_iter().map(|x| x.1).collect();
 
-    let output = serde_json::json!({
-        "history": final_history,
-        "landmarks": landmarks_out
-    });
-
-    serde_json::to_writer(
-        BufWriter::new(File::create("apex_pose_graph.json")?),
-        &output,
-    )?;
+    let output = serde_json::json!({ "history": final_history, "landmarks": landmarks_out });
+    let file = File::create(path)?;
+    serde_json::to_writer(BufWriter::new(file), &output)?;
     Ok(())
 }
