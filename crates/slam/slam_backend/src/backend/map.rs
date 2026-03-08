@@ -1,4 +1,4 @@
-use nalgebra::{Point3, Vector2};
+use nalgebra::Point3;
 use std::collections::HashMap;
 
 pub type LandmarkId = u64;

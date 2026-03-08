@@ -66,9 +66,133 @@ mod tests {
         println!("Optimization successful.");
     }
 
+#[test]
+    fn test_full_slam_pipeline_with_map() {
+        let mut backend = Backend::new();
+        let mut map = LandmarkMap::new(); // The map manages our IDs and 3D estimates
+
+        let pinhole_params = PinholeParams::new(500.0, 500.0, 320.0, 240.0).unwrap();
+        let camera = PinholeCamera::new(pinhole_params, DistortionModel::None).unwrap();
+
+        let mut rng = rand::rngs::StdRng::seed_from_u64(42);
+        let pose_noise = Normal::new(0.0, 0.05).unwrap();  // 5cm odometry drift
+        let lm_noise = Normal::new(0.0, 0.1).unwrap();     // 10cm depth estimation error
+        let pixel_noise = Normal::new(0.0, 1.0).unwrap();  // 1 pixel feature tracking error
+
+        // 1. Front-end detects initial map features and registers them
+        let mut gt_landmarks = Vec::new();
+        for x in -2..=2 {
+            for y in -2..=2 {
+                let gt_pos = Point3::new(x as f64 * 2.0, y as f64 * 2.0, 10.0);
+                gt_landmarks.push(gt_pos);
+
+                // Front-end triangulates a noisy 3D position
+                let noisy_pos = Point3::new(
+                    gt_pos.x + lm_noise.sample(&mut rng),
+                    gt_pos.y + lm_noise.sample(&mut rng),
+                    gt_pos.z + lm_noise.sample(&mut rng),
+                );
+                
+                // Save to map and register in backend
+                let lm_id = map.add_landmark(noisy_pos);
+                backend.add_landmark_variable(lm_id, noisy_pos);
+
+                // Anchor 3 non-collinear landmarks to lock the coordinate frame
+                let len = gt_landmarks.len();
+                if len == 1 || len == 2 || len == 6 {
+                    backend.add_landmark_prior(lm_id, gt_pos);
+                }
+            }
+        }
+
+        // 2. Robot begins moving
+        let num_poses = 20;
+        let radius = 2.0;
+        let mut previous_gt_pose: Option<SE3> = None;
+        let mut previous_pose_id: Option<u64> = None;
+
+        for i in 0..num_poses {
+            let angle = (i as f64) * (2.0 * std::f64::consts::PI / num_poses as f64);
+            let gt_pose = SE3::new(
+                Vector3::new(radius * angle.cos(), radius * angle.sin(), 0.0), 
+                UnitQuaternion::identity()
+            );
+
+            // Visual Odometry provides a noisy pose guess
+            let noisy_pose = SE3::new(
+                Vector3::new(
+                    gt_pose.translation().x + pose_noise.sample(&mut rng),
+                    gt_pose.translation().y + pose_noise.sample(&mut rng),
+                    gt_pose.translation().z + pose_noise.sample(&mut rng),
+                ),
+                UnitQuaternion::identity(),
+            );
+            let pose_id = backend.add_pose(noisy_pose);
+
+            // Add Odometry Constraint
+            if let (Some(prev_gt), Some(prev_id)) = (previous_gt_pose, previous_pose_id) {
+                let rel_motion_gt = prev_gt.inverse(None).compose(&gt_pose, None);
+                let noisy_rel_motion = SE3::new(
+                    Vector3::new(
+                        rel_motion_gt.translation().x + pose_noise.sample(&mut rng),
+                        rel_motion_gt.translation().y + pose_noise.sample(&mut rng),
+                        rel_motion_gt.translation().z + pose_noise.sample(&mut rng),
+                    ),
+                    UnitQuaternion::identity(),
+                );
+                backend.add_between(prev_id, pose_id, noisy_rel_motion);
+            }
+
+            // Add Visual Constraints (with pixel noise!)
+            for (lm_idx, gt_lm) in gt_landmarks.iter().enumerate() {
+                let inv_pose = gt_pose.inverse(None);
+                let p_c = inv_pose.rotation_so3().quaternion() * gt_lm + inv_pose.translation();
+
+                if p_c.z > 0.1 {
+                    let u = 500.0 * (p_c.x / p_c.z) + 320.0;
+                    let v = 500.0 * (p_c.y / p_c.z) + 240.0;
+
+                    let noisy_u = u + pixel_noise.sample(&mut rng);
+                    let noisy_v = v + pixel_noise.sample(&mut rng);
+
+                    // Front-end matched feature 'lm_idx' at pixel (noisy_u, noisy_v)
+                    backend.add_projection(
+                        pose_id,
+                        lm_idx as u64,
+                        Vector2::new(noisy_u, noisy_v),
+                        camera.clone(),
+                    );
+                }
+            }
+            previous_gt_pose = Some(gt_pose);
+            previous_pose_id = Some(pose_id);
+        }
+
+        // 3. Optimize the fusion of noisy sensors
+        let result = backend.optimize();
+        assert!(result.is_ok(), "Optimization failed to converge");
+
+        // 4. Update the Map with optimized values and evaluate
+        let mut final_error_sq = 0.0;
+        for (i, gt_lm) in gt_landmarks.iter().enumerate() {
+            let var_name = format!("l{}", i);
+            let opt_dv = backend.get_value(&var_name).unwrap();
+            let opt_lm = Point3::new(opt_dv[0], opt_dv[1], opt_dv[2]);
+
+            // Update the map for the front-end to use on the next frame!
+            if let Some(lm) = map.landmarks.get_mut(&(i as u64)) {
+                lm.position = opt_lm; 
+            }
+
+            final_error_sq += nalgebra::distance(&opt_lm, gt_lm).powi(2);
+        }
+
+        let final_rmse = (final_error_sq / gt_landmarks.len() as f64).sqrt();
+        println!("Final Optimized RMSE: {:.4} meters", final_rmse);
+        assert!(final_rmse < 0.05, "Graph failed to converge tightly enough");
+    }
 
 
-    
     #[test]
     fn test_circular_trajectory_bundle_adjustment() {
         let mut backend = Backend::new();

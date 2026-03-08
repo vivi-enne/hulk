@@ -92,7 +92,7 @@ unsafe impl FlatF32Storage for [f32; 32] {
 }
 
 impl ExtractedFeatures {
-    pub fn new(
+    pub fn _new(
         keypoints: Vec<Point2<Pixel>>,
         descriptors: Vec<[f32; 32]>,
         scores: Vec<f32>,

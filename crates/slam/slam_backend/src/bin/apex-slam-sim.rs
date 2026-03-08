@@ -1,6 +1,6 @@
 use color_eyre::Result;
 use indicatif::ProgressBar;
-use nalgebra::{DVector, Isometry3, Point3, UnitQuaternion, Vector3};
+use nalgebra::{Isometry3, UnitQuaternion, Vector3};
 use rand::SeedableRng;
 use rand_chacha::ChaCha8Rng;
 use rand_distr::{Distribution, Normal};
@@ -101,7 +101,6 @@ fn main() -> Result<()> {
         let var_prev = format!("x{}", last_id);
         let var_curr = format!("x{}", last_id + 1);
 
-        let se3_init = SE3::from_isometry(last_noisy_pose);
 
         let dv = nalgebra::dvector![
             last_noisy_pose.translation.vector.x,

@@ -30,7 +30,7 @@ struct Observation {
 
 #[derive(Clone)]
 struct PoseParticle {
-    id: u32,
+    _id: u32,
     pose: Pose3<SlamMap>,
     map: HashMap<u32, LandmarkParticleSet>,
     weight: f32,
@@ -39,7 +39,7 @@ struct PoseParticle {
 impl PoseParticle {
     pub fn new(id: u32) -> Self {
         Self {
-            id,
+            _id: id,
             pose: Pose3::default(),
             map: HashMap::new(),
             weight: 1.0,
@@ -49,7 +49,7 @@ impl PoseParticle {
 
 struct FastSLAM3D {
     particles: Vec<PoseParticle>,
-    num_particles: u32,
+    _num_particles: u32,
     translation_motion_noise_std: f32,
     rotation_motion_noise_std: f32,
     measurement_noise_std: f32,
@@ -60,7 +60,7 @@ impl FastSLAM3D {
     pub fn new(num_particles: u32) -> Result<Self> {
         Ok(Self {
             particles: (0..num_particles).map(|i| PoseParticle::new(i)).collect(),
-            num_particles,
+            _num_particles: num_particles,
             translation_motion_noise_std: 0.05, // meters
             rotation_motion_noise_std: 0.03,    // radians
             // Higher measurement noise helps avoid "killing" good particles
@@ -189,9 +189,7 @@ impl LandmarkParticleSet {
     }
 }
 
-struct ParticleCloud {
-    particles: Vec<PoseParticle>,
-}
+struct ParticleCloud {}
 
 impl ParticleCloud {
     /// Predictes movement by adding noise to create a cloud of possible new positions based on odometry
