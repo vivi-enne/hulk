@@ -2,7 +2,7 @@
 use apex_solver::{
     BundleAdjustment, ManifoldType, PinholeCamera, ProjectionFactor,
     core::{
-        loss_functions::{HuberLoss, LossFunction},
+        loss_functions::HuberLoss,
         problem::{Problem, VariableEnum},
     },
     factors::{BetweenFactor, PriorFactor},
@@ -13,6 +13,7 @@ use apex_solver::{
         levenberg_marquardt::{LevenbergMarquardt, LevenbergMarquardtConfig},
     },
 };
+use color_eyre::{Result, eyre::Context};
 use nalgebra::{DVector, Matrix2xX, Point3, Vector2};
 use std::collections::HashMap;
 
@@ -20,7 +21,7 @@ use crate::backend::weighted_factor::WeightedFactor;
 
 /// A simple pose graph backend
 pub struct Backend {
-    problem: Problem,
+    pub problem: Problem,
     initial_values: HashMap<String, (ManifoldType, DVector<f64>)>,
     last_id: u64,
 }
@@ -48,10 +49,7 @@ impl Backend {
 
         // add a weak prior on the first pose
         if id == 0 {
-            // let prior = PriorFactor { data: pose.into() };
             let prior = PriorFactor { data: dv.clone() };
-            // self.problem
-            //     .add_residual_block(&[&var_name], Box::new(prior), None);
 
             // 1000.0 weight acts as an immovable anchor
             let hard_anchor = WeightedFactor {
@@ -159,15 +157,85 @@ impl Backend {
             .add_residual_block(&[&var_name], Box::new(weighted_prior), None);
     }
 
-    pub fn optimize(&mut self) -> SolverResult<HashMap<String, VariableEnum>> {
+    pub fn update_initial_values(&mut self, result: &SolverResult<HashMap<String, VariableEnum>>) {
+        for (name, var) in &result.parameters {
+            if let Some(initial_var) = self.initial_values.get_mut(name) {
+                // Update the underlying DVector with the newly optimized values
+                match var {
+                    VariableEnum::SE3(se3) => {
+                        // Extract the SE3 object and convert to DVector
+                        initial_var.1 = se3.value.clone().into();
+                    }
+                    VariableEnum::Rn(rn) => {
+                        // Extract the 3D data array and build a DVector
+                        let data = rn.value.data();
+                        initial_var.1 = nalgebra::dvector![data[0], data[1], data[2]];
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    pub fn optimize(&mut self) -> Result<SolverResult<HashMap<String, VariableEnum>>> {
         let config = LevenbergMarquardtConfig::new()
             .with_linear_solver_type(LinearSolverType::SparseCholesky)
             .with_max_iterations(50);
         let mut solver = LevenbergMarquardt::with_config(config);
 
-        let result = solver
+        solver
             .optimize(&self.problem, &self.initial_values)
-            .expect("SLAM solver did not find a solution");
-        result
+            .wrap_err("SLAM solver did not find a solution")
+    }
+
+    pub fn optimize_sliding_window(
+        &mut self,
+        window_size: usize,
+        last_seen_landmarks: &HashMap<u64, u64>,
+    ) -> Result<SolverResult<HashMap<String, VariableEnum>>> {
+        let current_pose_count = self.last_id as usize;
+
+        dbg!(self.problem.total_residual_dimension);
+
+        if current_pose_count > window_size {
+            let freeze_until_id = (current_pose_count - window_size) as u64;
+            dbg!(freeze_until_id);
+
+            // freeze poses outside the sliding window
+            for id in 0..freeze_until_id {
+                let pose_name = format!("x{}", id);
+                // Mark the variable as constant in the problem
+                // SE3 has 6 degrees of freedom. Lock all of them.
+                for idx in 0..6 {
+                    self.problem.fix_variable(&pose_name, idx);
+                }
+
+                // freeze landmarks that haven't been observed in the active window
+                for (lm_id, last_seen_pose) in last_seen_landmarks.iter() {
+                    // If the landmark hasn't been seen by any pose in our active window freeze it
+                    if *last_seen_pose < freeze_until_id {
+                        let lm_name = format!("l{}", lm_id);
+                        for idx in 0..3 {
+                            self.problem.fix_variable(&lm_name, idx);
+                        }
+                    }
+                }
+            }
+        }
+
+        // Configure a fast optimization
+        let config = LevenbergMarquardtConfig::new()
+            .with_linear_solver_type(LinearSolverType::SparseCholesky)
+            .with_max_iterations(10);
+
+        let mut solver = LevenbergMarquardt::with_config(config);
+        solver
+            .optimize(&self.problem, &self.initial_values)
+            .wrap_err("Sliding window optimization failed")
+    }
+
+    /// Clears all fixed variables so the entire graph can be optimized
+    pub fn unfix_all_variables(&mut self) {
+        self.problem.fixed_variable_indexes.clear();
     }
 }

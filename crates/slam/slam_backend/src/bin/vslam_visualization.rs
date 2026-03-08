@@ -2,6 +2,7 @@ use std::{
     collections::{BTreeMap, HashMap},
     fs::File,
     io::BufWriter,
+    time::Instant,
 };
 
 use apex_solver::{
@@ -11,23 +12,18 @@ use apex_solver::{
     optimizer::SolverResult,
 };
 use color_eyre::Result;
-use nalgebra::{Const, Isometry3, OPoint, Point3, Point4, Vector2, Vector3};
+use nalgebra::{Isometry3, Point3, Vector2, Vector3};
 use rand::Rng;
 use rand::SeedableRng;
 use rand_chacha::ChaCha8Rng;
 use rand_distr::{Distribution, Normal};
 use serde::Serialize;
 use slam_backend::backend::{map::LandmarkMap, slam_backend::Backend};
-
-#[derive(Serialize, Debug)]
+#[derive(Serialize, Clone, Debug)]
 struct PoseStep {
+    id: u64,
     true_pose: (f64, f64, f64),
     optimized_pose: (f64, f64, f64),
-}
-
-#[derive(Serialize, Debug)]
-struct OutputData {
-    history: Vec<PoseStep>,
 }
 
 #[derive(Serialize, Clone, Debug)]
@@ -35,6 +31,14 @@ struct LandmarkStep {
     lm_id: u64,
     true_pos: [f64; 3],
     opt_pos: [f64; 3],
+}
+
+// New struct to capture the graph state at every step
+#[derive(Serialize, Clone, Debug)]
+struct FrameData {
+    step: u64,
+    poses: Vec<PoseStep>,
+    landmarks: Vec<LandmarkStep>,
 }
 
 fn main() -> Result<()> {
@@ -46,26 +50,18 @@ fn main() -> Result<()> {
         .build_global()
         .ok();
 
-    // Define a simple Pinhole Camera (fx, fy, cx, cy)
     let pinhole = PinholeParams::new(500.0, 500.0, 320.0, 240.0)?;
-    let distortion = DistortionModel::None;
-    let camera = PinholeCamera::new(pinhole, distortion)?;
+    let camera = PinholeCamera::new(pinhole, DistortionModel::None)?;
 
     let mut true_poses = BTreeMap::new();
-
     let mut rng = ChaCha8Rng::seed_from_u64(42);
     let threshold = 0.1;
 
     let true_landmarks = generate_true_landmarks(150, &mut rng);
+    let mut last_seen_landmarks: HashMap<u64, u64> = HashMap::new();
 
-    dbg!(&true_landmarks);
-
-    let x = 5.0;
-    let y = 0.0;
-    let z = 0.0; // Upward movement
-    let true_iso = Isometry3::translation(x, y, z);
-
-    // First pose acts as our perfect anchor (Zero-state)
+    // Initial State
+    let true_iso = Isometry3::translation(5.0, 0.0, 0.0);
     let mut current_guess_t_cw = true_iso.inverse().clone();
     let mut pose_id = backend.add_pose(SE3::from_isometry(current_guess_t_cw.clone()));
     true_poses.insert(pose_id, Point3::from(true_iso.translation.vector));
@@ -81,59 +77,75 @@ fn main() -> Result<()> {
         &mut map,
         &mut backend,
         pose_id,
+        &mut last_seen_landmarks,
         threshold,
         &mut rng,
     )?;
 
-    // 2. Spiral Trajectory Simulation
-    let total_steps = 200;
-    for i in 1..total_steps {
-        // let t = i as f64 * 0.2;
-        // let x = t.cos() * 2.0;
-        // let y = t.sin() * 2.0;
-        // let z = t * 0.5; // Upward movement
+    // Store the snapshots
+    let mut frames: Vec<FrameData> = Vec::new();
+    let mut before_optimization_time = Instant::now();
 
-        // Create a full circle (2 * PI) over the 200 steps
-        let t = (i as f64) * (2.0 * std::f64::consts::PI / (total_steps - 20) as f64);
+    // Optimize step 0
+    let result = backend.optimize()?;
+    println!("{}", before_optimization_time.elapsed().as_secs_f64());
 
-        // Radius of 5.0 meters, flat on the Z-plane
-        let x = t.cos() * 5.0;
-        let y = t.sin() * 5.0;
-        let z = 0.0;
+    backend.update_initial_values(&result);
 
-        // To make the camera "look" around the room, we also rotate it
-        // to face tangent to the circle
+    frames.push(extract_frame(0, &result, &true_poses, &true_landmarks));
+
+    let mut is_loop_closure;
+
+    let translation_std = 0.1;
+    let rotation_std = 0.001;
+    let laps = 6;
+    let steps_per_lap = 100;
+    let total_steps = laps * steps_per_lap;
+    let window_size = 50; // only optimize the last 15 poses
+
+    for i in 1..=total_steps {
+        println!("Processing step {}/{}...", i, total_steps);
+
+        // // let t = i as f64 * 0.2;
+        // // let x = t.cos() * 2.0;
+        // // let y = t.sin() * 2.0;
+        // // let z = t * 0.3; // Upward movement
+
+        // // Circular Room Trajectory
+        // let t = (i as f64) * (2.0 * std::f64::consts::PI / (total_steps - 20) as f64);
+        // let x = t.cos() * 5.0;
+        // let y = t.sin() * 5.0;
+        // let z = 0.0;
+
+        let t = (i as f64) * (laps as f64 * 2.0 * std::f64::consts::PI / total_steps as f64);
+
+        // Figure-8 (Lissajous) Parametric Equations (Bounded to roughly 12x8m)
+        let x = 6.0 * t.sin();
+        let y = 4.0 * (2.0 * t).sin();
+        let z = t * 0.1;
+
+        // Calculate heading (yaw) using the derivatives dx/dt and dy/dt
+        let dx = 6.0 * t.cos();
+        let dy = 8.0 * (2.0 * t).cos();
+        let yaw = dy.atan2(dx);
+
+        // Camera looks along the circle path
         let rotation =
-            nalgebra::UnitQuaternion::from_euler_angles(0.0, t + std::f64::consts::FRAC_PI_2, 0.0);
-        let translation = nalgebra::Translation3::new(x, y, z);
-        let true_iso = Isometry3::from_parts(translation, rotation);
-
+            nalgebra::UnitQuaternion::from_euler_angles(0.0, t + std::f64::consts::FRAC_PI_2, yaw);
+        let true_iso = Isometry3::from_parts(nalgebra::Translation3::new(x, y, z), rotation);
         let true_t_cw = true_iso.inverse();
 
-        // Odometry between T_cw frames
         let true_relative_delta = prev_true_t_cw.inverse() * true_t_cw.clone();
 
-        let trans_std = 0.1; // 1cm standard deviation
-        let rot_std = 0.005; // ~0.05 degree standard deviation
-        let trans_dist = Normal::new(0.0, trans_std)?;
-        let rot_dist = Normal::new(0.0, rot_std)?;
+        let trans_dist = Normal::new(0.0, translation_std)?;
+        let rot_dist = Normal::new(0.0, rotation_std)?;
 
         let noisy_delta =
             apply_gaussian_noise_to_isometry(true_relative_delta, &trans_dist, &rot_dist, &mut rng);
+        let odom_weight = 1.0 / (translation_std * translation_std);
 
-        // WEIGHT: 1 / variance
-        let odom_sigma = 0.02;
-        let odom_weight = 1.0 / (odom_sigma * odom_sigma); // Weight = 2500.0
-
-        let px_sigma = 1.0;
-        let px_weight = 1.0 / (px_sigma * px_sigma); // Weight = 1.0
-
-        // accumulate the noisy delta to get our realistic initial guess
         current_guess_t_cw = prev_guess_t_cw * noisy_delta.clone();
-
-        // Feed noisy guess to the solver
         pose_id = backend.add_pose(SE3::from_isometry(current_guess_t_cw.clone()));
-
         backend.add_between(
             prev_id,
             pose_id,
@@ -154,17 +166,113 @@ fn main() -> Result<()> {
             &mut map,
             &mut backend,
             pose_id,
+            &mut last_seen_landmarks,
             threshold,
             &mut rng,
         )?;
+
+        is_loop_closure = i % steps_per_lap == 0;
+        if is_loop_closure {
+            println!("Lap complete! Running Global BA...");
+            backend.unfix_all_variables();
+
+            // Re-anchor the origin so the map doesn't float away!
+            for idx in 0..6 {
+                backend.problem.fix_variable("x0", idx);
+            }
+
+            before_optimization_time = Instant::now();
+            let optimizer_result = backend.optimize();
+            println!(
+                "Global BA Time: {} seconds",
+                before_optimization_time.elapsed().as_secs_f64()
+            );
+
+            match optimizer_result {
+                Ok(result) => {
+                    backend.update_initial_values(&result);
+                    frames.push(extract_frame(
+                        i as u64,
+                        &result,
+                        &true_poses,
+                        &true_landmarks,
+                    ));
+                }
+                Err(e) => println!("Global BA Failed: {}. Continuing with Dead-Reckoning.", e),
+            }
+        } else {
+            // Normal tracking step
+            before_optimization_time = Instant::now();
+            let optimizer_result =
+                backend.optimize_sliding_window(window_size, &last_seen_landmarks);
+            println!(
+                "Sliding Window Optimization Time: {} seconds",
+                before_optimization_time.elapsed().as_secs_f64()
+            );
+
+            match optimizer_result {
+                Ok(result) => {
+                    backend.update_initial_values(&result);
+                    frames.push(extract_frame(
+                        i as u64,
+                        &result,
+                        &true_poses,
+                        &true_landmarks,
+                    ));
+                }
+                Err(e) => {
+                    // just log a warning and let the robot coast on odometry
+                    println!("Local tracking wobble at step {}: {}. Coasting...", i, e);
+                }
+            }
+        }
     }
 
-    let result = backend.optimize();
-
-    let path = "apex_pose_graph.json";
-    extract_and_save_result(result, true_poses, true_landmarks, path)?;
-
+    let file = File::create("apex_pose_graph.json")?;
+    serde_json::to_writer(BufWriter::new(file), &frames)?;
     Ok(())
+}
+
+fn extract_frame(
+    step: u64,
+    result: &SolverResult<HashMap<String, VariableEnum>>,
+    true_poses: &BTreeMap<u64, Point3<f64>>,
+    true_landmarks: &BTreeMap<u64, Point3<f64>>,
+) -> FrameData {
+    let mut poses = Vec::new();
+    let mut landmarks = Vec::new();
+
+    for (name, var_enum) in &result.parameters {
+        if name.starts_with('x') {
+            let id: u64 = name[1..].parse().unwrap();
+            if let (VariableEnum::SE3(se3), Some(tp)) = (var_enum, true_poses.get(&id)) {
+                let op = se3.value.inverse(None).translation();
+                poses.push(PoseStep {
+                    id,
+                    true_pose: (tp.x, tp.y, tp.z),
+                    optimized_pose: (op.x, op.y, op.z),
+                });
+            }
+        } else if name.starts_with('l') {
+            let id: u64 = name[1..].parse().unwrap();
+            if let (VariableEnum::Rn(rn), Some(tp)) = (var_enum, true_landmarks.get(&id)) {
+                let op = rn.value.data();
+                landmarks.push(LandmarkStep {
+                    lm_id: id,
+                    true_pos: [tp.x, tp.y, tp.z],
+                    opt_pos: [op[0], op[1], op[2]],
+                });
+            }
+        }
+    }
+
+    poses.sort_by_key(|p| p.id);
+    landmarks.sort_by_key(|l| l.lm_id);
+    FrameData {
+        step,
+        poses,
+        landmarks,
+    }
 }
 
 fn generate_true_landmarks(count: usize, rng: &mut impl Rng) -> BTreeMap<u64, Point3<f64>> {
@@ -187,11 +295,14 @@ fn process_landmarks_for_pose(
     map: &mut LandmarkMap,
     backend: &mut Backend,
     pose_id: u64,
+    last_seen_landmarks: &mut HashMap<u64, u64>,
     threshold: f32,
     rng: &mut ChaCha8Rng,
 ) -> Result<()> {
     let mut frame_landmarks = Vec::new();
-    let px_weight = 1.0;
+    // Tie the weight mathematically to the noise variance
+    let px_std = 5.0;
+    let px_weight = 1.0 / (px_std * px_std); // Weight becomes 0.04
 
     for (id, &true_landmark_position) in landmarks {
         let local_pt = camera_isometry.inverse() * true_landmark_position;
@@ -208,11 +319,12 @@ fn process_landmarks_for_pose(
                 None => {
                     // Instead of global noise, add small noise to the LOCAL coordinates
                     let local_pt = camera_isometry.inverse() * true_landmark_position;
+                    let noise_range = 0.1; // 2 cm noise
                     let noisy_local = local_pt
                         + Vector3::new(
-                            rng.random_range(-0.02..0.02),
-                            rng.random_range(-0.02..0.02),
-                            rng.random_range(-0.02..0.02),
+                            rng.random_range(-noise_range..noise_range),
+                            rng.random_range(-noise_range..noise_range),
+                            rng.random_range(-noise_range..noise_range),
                         );
 
                     // Transform back to global for the backend
@@ -220,10 +332,12 @@ fn process_landmarks_for_pose(
 
                     map.add_landmark(noisy_global, desc);
                     backend.add_landmark_variable(*id, noisy_global);
-                    backend.add_weak_landmark_prior(*id, noisy_global, 0.001);
+                    backend.add_weak_landmark_prior(*id, noisy_global, 0.1);
                     *id
                 }
             };
+
+            last_seen_landmarks.insert(landmark_id, pose_id);
 
             backend.add_projection(pose_id, landmark_id, noisy_uv, camera.clone(), px_weight);
             frame_landmarks.push(landmark_id);
@@ -231,73 +345,6 @@ fn process_landmarks_for_pose(
     }
 
     Ok(())
-}
-
-fn extract_and_save_result(
-    result: SolverResult<HashMap<String, VariableEnum>>,
-    true_poses: BTreeMap<u64, OPoint<f64, Const<3>>>,
-    true_landmarks: BTreeMap<u64, OPoint<f64, Const<3>>>,
-    path: &str,
-) -> Result<()> {
-    let mut history = Vec::new();
-    let mut landmarks_out = Vec::new();
-
-    for (name, var_enum) in &result.parameters {
-        if name.starts_with('x') {
-            let id: u64 = name[1..].parse()?;
-            if let (VariableEnum::SE3(se3), Some(tp)) = (var_enum, true_poses.get(&id)) {
-                // let op = se3.value.translation();
-                let op = se3.value.inverse(None).translation();
-
-                history.push((
-                    id,
-                    PoseStep {
-                        true_pose: (tp.x, tp.y, tp.z),
-                        // optimized_pose: (0.0, 0.0, 0.0), //(op.x, op.y, op.z),
-                        optimized_pose: (op.x, op.y, op.z),
-                    },
-                ));
-            }
-        } else if name.starts_with('l') {
-            let id: u64 = name[1..].parse()?;
-            // Only exports landmarks that were successfully added to the solver
-            if let (VariableEnum::Rn(rn), Some(tp)) = (var_enum, true_landmarks.get(&id)) {
-                let op = rn.value.data();
-                landmarks_out.push(LandmarkStep {
-                    lm_id: id,
-                    true_pos: (tp.x, tp.y, tp.z).into(),
-                    opt_pos: (op[0], op[1], op[2]).into(),
-                });
-            }
-        }
-    }
-
-    history.sort_by_key(|x| x.0);
-    let final_history: Vec<PoseStep> = history.into_iter().map(|x| x.1).collect();
-
-    let output = serde_json::json!({ "history": final_history, "landmarks": landmarks_out });
-    let file = File::create(path)?;
-    serde_json::to_writer(BufWriter::new(file), &output)?;
-    Ok(())
-}
-
-fn apply_noise_to_isometry(
-    isometry: Isometry3<f64>,
-    translation_std: f64,
-    rotation_std: f64,
-    rng: &mut impl Rng,
-) -> Isometry3<f64> {
-    let translation = Vector3::new(
-        rng.random_range(-translation_std..translation_std),
-        rng.random_range(-translation_std..translation_std),
-        rng.random_range(-translation_std..translation_std),
-    );
-    let rotation = nalgebra::UnitQuaternion::from_euler_angles(
-        rng.random_range(-rotation_std..rotation_std),
-        rng.random_range(-rotation_std..rotation_std),
-        rng.random_range(-rotation_std..rotation_std),
-    );
-    isometry * Isometry3::from_parts(translation.into(), rotation)
 }
 
 fn apply_gaussian_noise_to_isometry(
