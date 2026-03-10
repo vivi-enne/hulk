@@ -449,9 +449,7 @@ pub struct RLWalkingParameters {
 
     pub hybrid_align_distance: f32,
     pub max_alignment_rate: f32,
-    pub walk_speed_slow: f32,
-    pub walk_speed_normal: f32,
-    pub walk_speed_fast: f32,
+    pub deceleration_distance: f32,
 }
 
 #[derive(
