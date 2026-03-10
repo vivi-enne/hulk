@@ -315,13 +315,19 @@
     }
   },
   "injected_primary_state": null,
+  "walk_speed": {
+    "defend": "Normal",
+    "kicking": "Fast",
+    "intercept_ball": "Fast",
+    "lost_ball": "Normal",
+    "search": "Normal",
+    "support": "Normal",
+    "walk_to_kickoff": "Normal",
+    "walk_to_penalty_kick": "Normal"
+  },
   "behavior": {
     "injected_motion_command": null,
-    "optional_roles": [
-      "Defender",
-      "Midfielder",
-      "StrikerSupporter"
-    ],
+    "optional_roles": ["Defender", "Midfielder", "StrikerSupporter"],
     "walk_with_velocity": {
       "max_velocity": 1.0,
       "max_angular_velocity": 1.0,
@@ -334,6 +340,64 @@
         "turn": 0.0
       },
       "enable": false
+    },
+    "path_planning": {
+      "robot_radius_at_hip_height": 0.15,
+      "robot_radius_at_foot_height": 0.2,
+      "minimum_robot_radius_at_foot_height": 0.11,
+      "ball_obstacle_radius": 0.05,
+      "field_border_weight": 0.15,
+      "line_walking_speed": 0.25,
+      "arc_walking_speed": 0.2,
+      "rotation_penalty_factor": 0.4,
+      "half_rotation": {
+        "nanos": 0,
+        "secs": 3
+      }
+    },
+    "walk_and_stand": {
+      "hysteresis": [0.1, 0.1],
+      "target_reached_thresholds": [0.02, 0.05],
+      "hybrid_align_distance": 0.95,
+      "normal_distance_to_be_aligned": 0.05,
+      "defender_distance_to_be_aligned": 1.05,
+      "defender_hysteresis": [0.5, 0.5],
+      "supporter_hysteresis": [0.5, 0.5]
+    },
+    "role_positions": {
+      "defender_aggressive_ring_radius": 2.0,
+      "defender_passive_ring_radius": 1.7,
+      "defender_y_offset": 0.7,
+      "defender_passive_distance": 3.5,
+      "defender_passive_hysteresis": 1.0,
+      "left_midfielder_distance_to_ball": 2.5,
+      "left_midfielder_maximum_x_in_ready_and_when_ball_is_not_free": -1.5,
+      "left_midfielder_minimum_x": -1.0,
+      "right_midfielder_distance_to_ball": 2.5,
+      "right_midfielder_maximum_x_in_ready_and_when_ball_is_not_free": -1.5,
+      "right_midfielder_minimum_x": 0.0,
+      "striker_supporter_distance_to_ball": 1.2,
+      "striker_supporter_maximum_x_in_ready_and_when_ball_is_not_free": -1.0,
+      "striker_supporter_minimum_x": -2.0,
+      "keeper_x_offset": 0.1,
+      "keeper_passive_distance": 4.5,
+      "striker_distance_to_non_free_center_circle": 0.4,
+      "striker_kickoff_position": [-0.21, 0.03]
+    },
+    "lost_ball": {
+      "offset_to_last_ball_location": [1.0, 0.0]
+    },
+    "search": {
+      "position_reached_distance": 0.4,
+      "rotation_per_step": 0.4,
+      "turn_secs": 3.0,
+      "stand_secs": 1.0,
+      "estimated_ball_speed": 0.75
+    },
+    "kicking": {
+      "kick_power": 1.0,
+      "distance_for_kick": 0.5,
+      "distance_to_look_directly_at_the_ball": 4.0
     }
   },
   "role_assignment": {
@@ -378,7 +442,8 @@
     "border_strip_width": 2.0,
     "goal_inner_width": 1.5,
     "goal_post_diameter": 0.1,
-    "goal_depth": 0.5
+    "goal_depth": 0.5,
+    "corner_arc_radius": 0.0
   },
   "object_detection": {
     "enable": true,
@@ -747,5 +812,23 @@
     "own_ball_weight": 1.0,
     "team_ball_weight": 1.0,
     "rule_ball_weight": 1.0
+  },
+  "kick_selector": {
+    "distance_to_corner": 1.5,
+    "corner_kick_target_distance_to_goal": 1.3,
+    "min_obstacle_distance": 1.0,
+    "kick_pose_robot_radius": 0.1,
+    "kick_off_angle": 0.9,
+    "default_kick_variants": ["Forward", "Side", "Turn"],
+    "corner_kick_variants": ["Forward", "Side", "Turn"],
+    "kick_off_kick_variants": ["Forward"],
+    "penalty_shot_kick_variants": ["Forward"],
+    "default_kick_strength": 1.0,
+    "corner_kick_strength": 0.25,
+    "kick_off_kick_strength": 1.0,
+    "penalty_shot_kick_strength": 1.0,
+    "angle_distance_weight": 0.02,
+    "closer_to_goal_threshold": 1.0,
+    "goal_accuracy_margin": 0.25
   }
 }

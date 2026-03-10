@@ -1,5 +1,6 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use hsl_network_messages::PlayerNumber;
 use serde::{Deserialize, Serialize};
 
 use coordinate_systems::{Field, Ground};
@@ -7,21 +8,25 @@ use linear_algebra::{Isometry2, Point2, Vector2};
 use path_serde::{PathDeserialize, PathIntrospect, PathSerialize};
 
 use crate::{
-    field_dimensions::Side, filtered_game_controller_state::FilteredGameControllerState,
-    kick_decision::KickDecision, obstacles::Obstacle, primary_state::PrimaryState,
-    rule_obstacles::RuleObstacle,
+    ball_position::HypotheticalBallPosition, field_dimensions::Side,
+    filtered_game_controller_state::FilteredGameControllerState, kick_decision::KickDecision,
+    obstacles::Obstacle, primary_state::PrimaryState, roles::Role, rule_obstacles::RuleObstacle,
 };
 
 #[derive(Clone, Debug, Serialize, Deserialize, PathSerialize, PathIntrospect)]
 pub struct WorldState {
     pub ball: Option<BallState>,
     pub filtered_game_controller_state: Option<FilteredGameControllerState>,
+    pub hypothetical_ball_positions: Vec<HypotheticalBallPosition<Ground>>,
     pub instant_kick_decisions: Option<Vec<KickDecision>>,
     pub kick_decisions: Option<Vec<KickDecision>>,
+    pub now: SystemTime,
     pub obstacles: Vec<Obstacle>,
+    pub position_of_interest: Point2<Ground>,
     pub robot: RobotState,
     pub rule_ball: Option<BallState>,
     pub rule_obstacles: Vec<RuleObstacle>,
+    pub suggested_search_position: Option<Point2<Field>>,
 }
 
 #[allow(clippy::derivable_impls)]
@@ -30,12 +35,16 @@ impl Default for WorldState {
         Self {
             ball: Default::default(),
             filtered_game_controller_state: Default::default(),
+            hypothetical_ball_positions: Default::default(),
             instant_kick_decisions: Default::default(),
             kick_decisions: Default::default(),
+            now: UNIX_EPOCH,
             obstacles: Default::default(),
+            position_of_interest: Point2::origin(),
             robot: Default::default(),
             rule_ball: Default::default(),
             rule_obstacles: Default::default(),
+            suggested_search_position: Default::default(),
         }
     }
 }
@@ -104,5 +113,7 @@ impl BallState {
 )]
 pub struct RobotState {
     pub ground_to_field: Option<Isometry2<Ground, Field>>,
+    pub player_number: PlayerNumber,
     pub primary_state: PrimaryState,
+    pub role: Role,
 }
