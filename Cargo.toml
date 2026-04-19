@@ -32,6 +32,7 @@ members = [
   "crates/hungarian_algorithm",
   "crates/hydra",
   "crates/kinematics",
+  "crates/localization-factrs",
   "crates/linear_algebra",
   "crates/microphones",
   "crates/motion",
@@ -242,6 +243,7 @@ libc = "0.2.169"
 line_detection = { path = "crates/nodes/line_detection" }
 linear_algebra = { path = "crates/linear_algebra" }
 localization = { path = "crates/nodes/localization" }
+localization-factrs = { path = "crates/localization-factrs" }
 log = "0.4.25"
 look_around = { path = "crates/nodes/look_around" }
 look_at = { path = "crates/nodes/look_at" }

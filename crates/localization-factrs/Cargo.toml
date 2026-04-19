@@ -1,0 +1,19 @@
+[package]
+name = "localization-factrs"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+homepage.workspace = true
+
+[dependencies]
+color-eyre.workspace = true
+context_attribute.workspace = true
+framework.workspace = true
+hardware.workspace = true
+ros2.workspace = true
+serde.workspace = true
+types.workspace = true
+booster.workspace = true
+factrs = "0.3.0"
+nalgebra.workspace = true
+faer = "0.24.0"

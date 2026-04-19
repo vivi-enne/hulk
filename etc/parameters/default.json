@@ -605,7 +605,7 @@
     "correction_in_camera": [0.0, 0.0, 0.0]
   },
   "cycler_frequencies": {
-    "world_state": 100
+    "world_state": 500
   },
   "look_at": {
     "glance_angle": 0.25,

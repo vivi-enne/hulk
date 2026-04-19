@@ -26,6 +26,7 @@ clap = { workspace = true }
 color-eyre = { workspace = true }
 communication = { workspace = true }
 coordinate_systems = { workspace = true }
+localization = { workspace = true }
 ctrlc = { workspace = true }
 derive_more = { workspace = true }
 env_logger = { workspace = true }
