@@ -168,6 +168,7 @@ impl<T: Numeric> SE23SparseGaussianProcessSegment<T> {
             .copy_from(&accelerometer_noise.scale(dt * dt / 2.));
         Q_d.fixed_view_mut::<3, 3>(6, 3)
             .copy_from(&accelerometer_noise.scale(dt * dt / 2.));
+        // TODO: check if this should be 6
         Q_d.fixed_view_mut::<3, 3>(6, 6)
             .copy_from(&accelerometer_noise.scale(dt * dt * dt / 3.));
         Q_d
