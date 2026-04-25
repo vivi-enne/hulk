@@ -1,104 +1,65 @@
 use std::time::SystemTime;
 
-use factrs::{traits::Variable, variables::SE23};
+use factrs::{linalg::Numeric, traits::Variable, variables::SE23};
 use nalgebra::{Matrix3, SMatrix, SVector};
 
-pub struct PrecomputedSe23SparseGaussianProcess {
+pub struct SE23SparseGaussianProcessSegment<T: Numeric> {
+    start_time: SystemTime,
+    start_pose: SE23<T>,
+    interpolation_factor: SVector<T, 9>,
     gyro_noise: Matrix3<f64>,
     accelerometer_noise: Matrix3<f64>,
-    segments: Vec<TrajectorySegment>,
 }
 
-struct TrajectorySegment {
-    start_time: SystemTime,
-    start_pose: SE23,
-    interpolation_factor: SVector<f64, 9>,
-}
-
-impl PrecomputedSe23SparseGaussianProcess {
+impl<T: Numeric> SE23SparseGaussianProcessSegment<T> {
     pub fn new(
+        start_time: SystemTime,
+        start_pose: SE23<T>,
+        end_time: SystemTime,
+        end_pose: SE23<T>,
         gyro_noise: Matrix3<f64>,
         accelerometer_noise: Matrix3<f64>,
-        control_points: &[(SystemTime, SE23)],
     ) -> Self {
-        let segments = control_points
-            .array_windows::<2>()
-            .map(|[(t_prev, pose_prev), (t_after, pose_after)]| {
-                Self::build_segment(
-                    *t_prev,
-                    pose_prev.clone(),
-                    *t_after,
-                    pose_after.clone(),
-                    &gyro_noise,
-                    &accelerometer_noise,
-                )
-            })
-            .collect();
-
-        Self {
-            gyro_noise,
-            accelerometer_noise,
-            segments,
-        }
-    }
-
-    fn build_segment(
-        start_time: SystemTime,
-        start_pose: SE23,
-        end_time: SystemTime,
-        end_pose: SE23,
-        gyro_noise: &Matrix3<f64>,
-        accelerometer_noise: &Matrix3<f64>,
-    ) -> TrajectorySegment {
         let duration = end_time
             .duration_since(start_time)
             .expect("invalid time order")
             .as_secs_f64();
-        let covariance_between = Self::noise_covariance(gyro_noise, accelerometer_noise, duration);
+        let covariance_between =
+            Self::noise_covariance(&gyro_noise, &accelerometer_noise, duration).cast::<T>();
 
         let relative_algebra_error = start_pose.inverse().compose(&end_pose).log();
-        let relative_algebra_error: SVector<f64, 9> =
+        let relative_algebra_error: SVector<T, 9> =
             SVector::from_column_slice(relative_algebra_error.as_slice());
         let interpolation_factor = covariance_between
             .cholesky()
             .expect("covariance must be positive definite")
             .solve(&relative_algebra_error);
 
-        TrajectorySegment {
+        SE23SparseGaussianProcessSegment {
             start_time,
             start_pose,
             interpolation_factor,
+            gyro_noise,
+            accelerometer_noise,
         }
     }
-
     #[allow(non_snake_case)]
-    pub fn infer(&self, tau: SystemTime) -> SE23 {
-        let segment = match self
-            .segments
-            .binary_search_by(|segment| segment.start_time.cmp(&tau))
-        {
-            // Exact match found
-            Ok(index) => return self.segments[index].start_pose.clone(),
-            // Inside the GP support
-            Err(index) if index > 0 => &self.segments[index - 1],
-            // Out of support
-            Err(_) => todo!(),
-        };
-
+    pub fn infer(&self, tau: SystemTime) -> SE23<T> {
         let duration_prev = tau
-            .duration_since(*&segment.start_time)
+            .duration_since(self.start_time)
             .expect("segment must start before timestamp");
-        let Phi_prev = Self::transition_matrix(duration_prev.as_secs_f64());
+        let Phi_prev = Self::transition_matrix(duration_prev.as_secs_f64()).cast::<T>();
         let Q_prev = Self::noise_covariance(
             &self.gyro_noise,
             &self.accelerometer_noise,
             duration_prev.as_secs_f64(),
-        );
+        )
+        .cast::<T>();
 
-        let projected = Phi_prev.transpose() * segment.interpolation_factor;
+        let projected = Phi_prev.transpose() * self.interpolation_factor;
         let error = Q_prev * projected;
 
-        segment.start_pose.oplus_right(error.as_view())
+        self.start_pose.oplus_right(error.as_view())
     }
 
     #[allow(non_snake_case)]
@@ -142,25 +103,19 @@ mod tests {
     #[test]
     fn test_infer() {
         let t_start = SystemTime::now();
-        let gp = PrecomputedSe23SparseGaussianProcess::new(
+        let gp = SE23SparseGaussianProcessSegment::new(
+            t_start,
+            SE23::from_rot_vel_trans(SO3::identity(), Vector3::zeros(), Vector3::zeros()),
+            t_start + Duration::from_secs(1),
+            SE23::from_rot_vel_trans(
+                SO3::identity(),
+                vector![2.0, 0.0, 0.0],
+                vector![1.0, 0.0, 0.0],
+            ),
             Matrix3::identity(),
             Matrix3::identity(),
-            &[
-                (
-                    t_start,
-                    SE23::from_rot_vel_trans(SO3::identity(), Vector3::zeros(), Vector3::zeros()),
-                ),
-                (
-                    t_start + Duration::from_secs(1),
-                    SE23::from_rot_vel_trans(
-                        SO3::identity(),
-                        vector![2.0, 0.0, 0.0],
-                        vector![1.0, 0.0, 0.0],
-                    ),
-                ),
-            ],
         );
 
-        dbg!(gp.infer(t_start + Duration::from_millis(500)));
+        dbg!(gp.infer(t_start + Duration::from_millis(500),));
     }
 }

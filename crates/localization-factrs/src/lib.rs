@@ -1,6 +1,6 @@
 pub mod backend;
 pub mod node;
-pub mod preintegration;
+pub mod imu_factor;
 pub mod sparse_gaussian_process;
 mod staging;
 pub mod symbols;
