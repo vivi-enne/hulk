@@ -6853,6 +6853,7 @@ dependencies = [
  "faer 0.24.0",
  "framework",
  "hardware",
+ "linear_algebra",
  "nalgebra",
  "ros2",
  "serde",

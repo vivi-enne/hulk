@@ -17,3 +17,4 @@ booster.workspace = true
 factrs = "0.3.0"
 nalgebra.workspace = true
 faer = "0.24.0"
+linear_algebra.workspace = true
