@@ -1,4 +1,4 @@
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime};
 
 use booster::ImuState;
 use color_eyre::Result;
@@ -9,6 +9,8 @@ use hardware::{CameraInterface, TimeInterface};
 use nalgebra::{Isometry3, Quaternion, Translation3, UnitQuaternion, vector};
 use serde::{Deserialize, Serialize};
 use types::object_detection::{Detection, NaoLabelPartyObjectDetectionLabel};
+
+use crate::{backend::BackendConfiguration, initialize};
 
 #[derive(Deserialize, Serialize)]
 pub struct ImageReceiver {
@@ -50,6 +52,15 @@ pub struct MainOutputs {}
 
 impl ImageReceiver {
     pub fn new(_context: CreationContext) -> Result<Self> {
+        let (frontend, backend) = initialize(BackendConfiguration {
+            knot_spacing: Duration::from_millis(200),
+            max_optimization_window: Duration::from_secs(3),
+        });
+        std::thread::spawn(move || {
+            backend
+                .run_loop()
+                .expect("localization backend closed unexpectedly")
+        });
         Ok(Self {
             time: SystemTime::UNIX_EPOCH,
             state: State::default(),

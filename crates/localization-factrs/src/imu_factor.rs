@@ -1,6 +1,5 @@
 use std::time::SystemTime;
 
-use booster::ImuState;
 use factrs::{
     core::Vector3,
     linalg::{ForwardProp, Matrix3, Numeric, VectorX},
@@ -9,7 +8,9 @@ use factrs::{
 };
 use nalgebra::Const;
 
-use crate::sparse_gaussian_process::SE23SparseGaussianProcessSegment;
+use crate::{
+    measurements::ImuMeasurement, sparse_gaussian_process::SE23SparseGaussianProcessSegment,
+};
 
 #[derive(Debug, Clone)]
 pub struct IntervalGaussianProcessImuFactor {
@@ -21,12 +22,6 @@ pub struct IntervalGaussianProcessImuFactor {
     gravity: Vector3<f64>,
     start_time: SystemTime,
     end_time: SystemTime,
-}
-
-#[derive(Debug, Clone)]
-pub struct ImuMeasurement {
-    pub time: SystemTime,
-    pub state: ImuState,
 }
 
 impl Residual for IntervalGaussianProcessImuFactor {
@@ -156,6 +151,7 @@ mod tests {
     use std::time::Duration;
 
     use super::*;
+    use booster::ImuState;
     use factrs::core::SO3;
     use linear_algebra::IntoFramed;
     use nalgebra::{Vector3, vector};
