@@ -6851,6 +6851,7 @@ dependencies = [
  "faer 0.24.0",
  "framework",
  "hardware",
+ "itertools 0.14.0",
  "linear_algebra",
  "log",
  "nalgebra",

@@ -3,10 +3,11 @@ use std::time::SystemTime;
 use factrs::{
     core::Vector3,
     linalg::{ForwardProp, Matrix3, Numeric, VectorX},
+    residuals::Residual2,
     traits::{Diff, Residual, Variable},
     variables::{MatrixLieGroup, SE23},
 };
-use nalgebra::Const;
+use nalgebra::{Const, dvector};
 
 use crate::{
     measurements::ImuMeasurement, sparse_gaussian_process::SE23SparseGaussianProcessSegment,
@@ -58,6 +59,20 @@ impl Residual for IntervalGaussianProcessImuFactor {
             v1,
             v2,
         )
+    }
+}
+
+impl Residual2 for IntervalGaussianProcessImuFactor {
+    type V1 = SE23;
+    type V2 = SE23;
+    type DimIn = Const<18>;
+    type DimOut = Const<1>;
+    type Differ = ForwardProp<Const<18>>;
+
+    fn residual2<T: Numeric>(&self, v1: SE23<T>, v2: SE23<T>) -> VectorX<T> {
+        let residuals = self.residuals_on_spline(v1, v2);
+
+        dvector![residuals.norm()]
     }
 }
 

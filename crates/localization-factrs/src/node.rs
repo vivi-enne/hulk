@@ -3,7 +3,7 @@ use std::time::{Duration, SystemTime};
 use booster::ImuState;
 use color_eyre::Result;
 use context_attribute::context;
-use factrs::{traits::Variable, variables::SE23};
+use factrs::{core::Vector3, linalg::Matrix3, traits::Variable, variables::SE23};
 use framework::{AdditionalOutput, PerceptionInput, deserialize_not_implemented};
 use hardware::{CameraInterface, TimeInterface};
 use nalgebra::{Isometry3, Quaternion, Translation3, UnitQuaternion, vector};
@@ -38,6 +38,10 @@ impl Localization {
         let (frontend, backend) = initialize(BackendConfiguration {
             knot_spacing: Duration::from_millis(200),
             max_optimization_window: Duration::from_secs(3),
+            // TODO: check in documentation of booster robot
+            gyroscope_noise: Matrix3::identity() * 0.01,
+            accelerometer_noise: Matrix3::identity() * 0.1,
+            gravity: Vector3::new(0., 0., 9.81),
         });
         std::thread::spawn(move || {
             backend
