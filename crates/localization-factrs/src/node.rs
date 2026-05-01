@@ -4,31 +4,20 @@ use booster::ImuState;
 use color_eyre::Result;
 use context_attribute::context;
 use factrs::{traits::Variable, variables::SE23};
-use framework::{AdditionalOutput, PerceptionInput};
+use framework::{AdditionalOutput, PerceptionInput, deserialize_not_implemented};
 use hardware::{CameraInterface, TimeInterface};
 use nalgebra::{Isometry3, Quaternion, Translation3, UnitQuaternion, vector};
 use serde::{Deserialize, Serialize};
-use types::object_detection::{Detection, NaoLabelPartyObjectDetectionLabel};
 
-use crate::{backend::BackendConfiguration, initialize};
+use crate::{backend::BackendConfiguration, frontend::VinsFrontend, initialize};
 
 #[derive(Deserialize, Serialize)]
-pub struct ImageReceiver {
+pub struct Localization {
     time: SystemTime,
-    #[serde(skip)]
-    state: State,
-}
-
-struct State {
+    #[serde(skip, default = "deserialize_not_implemented")]
     state: SE23,
-}
-
-impl Default for State {
-    fn default() -> Self {
-        Self {
-            state: SE23::identity(),
-        }
-    }
+    #[serde(skip, default = "deserialize_not_implemented")]
+    frontend: VinsFrontend,
 }
 
 #[context]
@@ -38,19 +27,13 @@ pub struct CreationContext {}
 pub struct CycleContext {
     hardware_interface: HardwareInterface,
     imu_state: PerceptionInput<ImuState, "Motion", "imu_state">,
-    object_detections: PerceptionInput<
-        Vec<Detection<NaoLabelPartyObjectDetectionLabel>>,
-        "ObjectDetection",
-        "detected_objects",
-    >,
-
     dead_reckoning: AdditionalOutput<Isometry3<f32>, "dead_reckoning">,
 }
 
 #[context]
 pub struct MainOutputs {}
 
-impl ImageReceiver {
+impl Localization {
     pub fn new(_context: CreationContext) -> Result<Self> {
         let (frontend, backend) = initialize(BackendConfiguration {
             knot_spacing: Duration::from_millis(200),
@@ -63,7 +46,8 @@ impl ImageReceiver {
         });
         Ok(Self {
             time: SystemTime::UNIX_EPOCH,
-            state: State::default(),
+            frontend,
+            state: SE23::identity(),
         })
     }
 
@@ -73,6 +57,8 @@ impl ImageReceiver {
     ) -> Result<MainOutputs> {
         for (time, imus) in context.imu_state.persistent {
             if let Some(imu) = imus.last() {
+                self.frontend.ingest_imu(time, **imu)?;
+
                 let dt = time.duration_since(self.time).unwrap_or_default();
                 let twist = vector![
                     imu.angular_velocity.x() as f64, // Angular rate
@@ -86,27 +72,29 @@ impl ImageReceiver {
                     0.0,
                 ] * dt.as_secs_f64();
 
-                self.state.state = self.state.state.oplus_right(twist.as_view());
+                self.state = self.state.oplus_right(twist.as_view());
                 self.time = time;
             }
         }
 
-        context.dead_reckoning.fill_if_subscribed(|| {
-            Isometry3::from_parts(
-                Translation3::from(
-                    vector![
-                        self.state.state.xyz().x,
-                        self.state.state.xyz().y,
-                        self.state.state.xyz().z,
-                    ]
-                    .cast::<f32>(),
-                ),
-                UnitQuaternion::from_quaternion(Quaternion::from_vector(
-                    self.state.state.rot().xyzw.cast::<f32>(),
-                )),
-            )
-        });
+        // self.frontend.last_optimization_result().map(|result| {
+        //     result.latest_pose
+        // })
+
+        context
+            .dead_reckoning
+            .fill_if_subscribed(|| se23_to_isometry3(self.state.clone()));
 
         Ok(MainOutputs {})
     }
+}
+
+fn se23_to_isometry3(pose: SE23) -> Isometry3<f32> {
+    let xyz = pose.xyz();
+    let rot = pose.rot();
+
+    Isometry3::from_parts(
+        Translation3::from(xyz.into_owned().cast::<f32>()),
+        UnitQuaternion::from_quaternion(Quaternion::from_vector(rot.xyzw.cast::<f32>())),
+    )
 }
