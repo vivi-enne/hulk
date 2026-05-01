@@ -14,7 +14,7 @@ ros2.workspace = true
 serde.workspace = true
 types.workspace = true
 booster.workspace = true
-factrs = "0.3.0"
+factrs = { git = "https://github.com/oleflb/fact-rs.git", rev = "75477127ec81fce22fdbfb11fc5d6456a2c55816"}
 nalgebra.workspace = true
 faer = "0.24.0"
 linear_algebra.workspace = true

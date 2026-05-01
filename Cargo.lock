@@ -4000,8 +4000,7 @@ dependencies = [
 [[package]]
 name = "factrs"
 version = "0.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "156d1ea13549a08acf1d79cc834d9538262226a9a00899511edd912ef5449e76"
+source = "git+https://github.com/oleflb/fact-rs.git?rev=75477127ec81fce22fdbfb11fc5d6456a2c55816#75477127ec81fce22fdbfb11fc5d6456a2c55816"
 dependencies = [
  "downcast-rs 2.0.2",
  "dyn-clone",
@@ -4023,8 +4022,7 @@ dependencies = [
 [[package]]
 name = "factrs-proc"
 version = "0.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "97f1e4da4f0f379db2aae5338654bd4aa2cc824a7473808f7394c33ddf22b612"
+source = "git+https://github.com/oleflb/fact-rs.git?rev=75477127ec81fce22fdbfb11fc5d6456a2c55816#75477127ec81fce22fdbfb11fc5d6456a2c55816"
 dependencies = [
  "proc-macro2",
  "quote",
