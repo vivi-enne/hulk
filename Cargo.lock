@@ -4000,7 +4000,7 @@ dependencies = [
 [[package]]
 name = "factrs"
 version = "0.3.0"
-source = "git+https://github.com/oleflb/fact-rs.git?rev=75477127ec81fce22fdbfb11fc5d6456a2c55816#75477127ec81fce22fdbfb11fc5d6456a2c55816"
+source = "git+https://github.com/oleflb/fact-rs.git?rev=be79625b0a7eef228aafa8ff78d16022d77389c1#be79625b0a7eef228aafa8ff78d16022d77389c1"
 dependencies = [
  "downcast-rs 2.0.2",
  "dyn-clone",
@@ -4022,7 +4022,7 @@ dependencies = [
 [[package]]
 name = "factrs-proc"
 version = "0.3.0"
-source = "git+https://github.com/oleflb/fact-rs.git?rev=75477127ec81fce22fdbfb11fc5d6456a2c55816#75477127ec81fce22fdbfb11fc5d6456a2c55816"
+source = "git+https://github.com/oleflb/fact-rs.git?rev=be79625b0a7eef228aafa8ff78d16022d77389c1#be79625b0a7eef228aafa8ff78d16022d77389c1"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -6852,6 +6852,7 @@ dependencies = [
  "framework",
  "hardware",
  "linear_algebra",
+ "log",
  "nalgebra",
  "ros2",
  "serde",
