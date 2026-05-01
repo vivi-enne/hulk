@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use crate::{backend::BackendConfiguration, frontend::VinsFrontend, initialize};
 
 #[derive(Deserialize, Serialize)]
-pub struct Localization {
+pub struct VinsLocalization {
     time: SystemTime,
     #[serde(skip, default = "deserialize_not_implemented")]
     state: SE23,
@@ -33,7 +33,7 @@ pub struct CycleContext {
 #[context]
 pub struct MainOutputs {}
 
-impl Localization {
+impl VinsLocalization {
     pub fn new(_context: CreationContext) -> Result<Self> {
         let (frontend, backend) = initialize(BackendConfiguration {
             knot_spacing: Duration::from_millis(200),

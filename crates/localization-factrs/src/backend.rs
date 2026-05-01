@@ -6,7 +6,7 @@ use factrs::{
     fac,
     linalg::Matrix3,
     optimizers::OptError,
-    traits::Optimizer,
+    traits::{Optimizer, Variable},
     variables::SE23,
 };
 use itertools::Itertools;
@@ -126,6 +126,9 @@ impl VinsBackend {
                 get_interval_index(key, self.config.knot_spacing, self.start_time) as u32;
             let factor = fac![residual, (State(interval_index), State(interval_index + 1))];
             self.optimizer.graph_mut().add_factor(factor);
+            let values = self.values.get_or_insert_default();
+            values.insert(State(interval_index), SE23::identity());
+            values.insert(State(interval_index + 1), SE23::identity());
         }
 
         Ok(())
