@@ -2,9 +2,10 @@ use std::time::{Duration, SystemTime};
 
 use factrs::{
     assign_symbols,
+    containers::ValuesOrder,
     core::{GaussNewton, Graph, Values, Vector3},
     fac,
-    linalg::Matrix3,
+    linalg::{DiffResult, Matrix3},
     optimizers::OptError,
     traits::{Optimizer, Variable},
     variables::SE23,
@@ -81,13 +82,19 @@ impl VinsBackend {
     /// Only returns if an error occurs.
     pub fn run_loop(mut self) -> Result<(), VinsBackendError> {
         loop {
-            self.ingest_until_empty()?;
-
-            let result = self.optimize();
-            if self.result_sender.send(result).is_err() {
-                return Err(VinsBackendError::FrontendDisconnected(FrontendDisconnected));
-            }
+            self.solve_once()?;
         }
+    }
+
+    pub fn solve_once(&mut self) -> Result<(), VinsBackendError> {
+        self.ingest_until_empty()?;
+
+        let result = self.optimize();
+        if self.result_sender.send(result).is_err() {
+            return Err(VinsBackendError::FrontendDisconnected(FrontendDisconnected));
+        }
+
+        Ok(())
     }
 
     fn ingest_until_empty(&mut self) -> Result<(), FrontendDisconnected> {
@@ -130,8 +137,10 @@ impl VinsBackend {
             let values = self.values.get_or_insert_default();
             values.insert(State(interval_index), SE23::identity());
             values.insert(State(interval_index + 1), SE23::identity());
+            dbg!(values);
             self.last_knot_time = Some(interval_end_time);
         }
+        dbg!(&self.values);
 
         Ok(())
     }
@@ -139,6 +148,12 @@ impl VinsBackend {
     fn optimize(&mut self) -> Option<OptimizationResult> {
         let values = self.values.take().unwrap_or_default();
         log::info!("solving graph with {} values", values.len());
+        let linear_graph = self.optimizer.graph_mut().linearize(&values);
+        let graph_order = linear_graph.sparsity_pattern(ValuesOrder::from_values(&values));
+        let DiffResult { value: r, diff: j } = linear_graph.residual_jacobian(&graph_order);
+        dbg!(j.to_dense());
+        dbg!(r);
+
         let result = self.optimizer.optimize(values);
 
         match result {

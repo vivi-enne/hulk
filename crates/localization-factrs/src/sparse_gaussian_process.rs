@@ -9,6 +9,7 @@ pub struct SE23SparseGaussianProcessSegment<T: Numeric> {
     interpolation_factor: SVector<T, 9>,
     gyro_noise: Matrix3<f64>,
     accelerometer_noise: Matrix3<f64>,
+    total_duration: f64,
 }
 
 impl<T: Numeric> SE23SparseGaussianProcessSegment<T> {
@@ -20,16 +21,18 @@ impl<T: Numeric> SE23SparseGaussianProcessSegment<T> {
         gyro_noise: Matrix3<f64>,
         accelerometer_noise: Matrix3<f64>,
     ) -> Self {
-        let duration = end_time
+        let total_duration = end_time
             .duration_since(start_time)
             .expect("invalid time order")
             .as_secs_f64();
+
         let covariance_between =
-            Self::noise_covariance(&gyro_noise, &accelerometer_noise, duration).cast::<T>();
+            Self::noise_covariance(&gyro_noise, &accelerometer_noise, total_duration).cast::<T>();
 
         let relative_algebra_error = start_pose.inverse().compose(&end_pose).log();
         let relative_algebra_error: SVector<T, 9> =
             SVector::from_column_slice(relative_algebra_error.as_slice());
+
         let interpolation_factor = covariance_between
             .cholesky()
             .expect("covariance must be positive definite")
@@ -41,6 +44,7 @@ impl<T: Numeric> SE23SparseGaussianProcessSegment<T> {
             interpolation_factor,
             gyro_noise,
             accelerometer_noise,
+            total_duration,
         }
     }
 
@@ -69,32 +73,38 @@ impl<T: Numeric> SE23SparseGaussianProcessSegment<T> {
         let delta_time = duration_previous.as_secs_f64();
         let delta_time_squared = delta_time * delta_time;
         let delta_time_cubed = delta_time_squared * delta_time;
+        let total_duration = self.total_duration;
 
         let lambda_0 = self.interpolation_factor.fixed_view::<3, 1>(0, 0);
         let lambda_1 = self.interpolation_factor.fixed_view::<3, 1>(3, 0);
         let lambda_2 = self.interpolation_factor.fixed_view::<3, 1>(6, 0);
 
-        // Scale prior to casting to ensure trait bounds are satisfied for multiplication
         let gyro_scaled_time = self.gyro_noise.scale(delta_time).cast::<T>();
 
         let accel_scaled_time = self.accelerometer_noise.scale(delta_time).cast::<T>();
-        let accel_scaled_1_5_time_squared = self
+
+        let velocity_cross_term = (delta_time * total_duration) - (0.5 * delta_time_squared);
+        let accel_scaled_velocity_cross = self
             .accelerometer_noise
-            .scale(1.5 * delta_time_squared)
+            .scale(velocity_cross_term)
             .cast::<T>();
-        let accel_scaled_0_5_time_squared = self
+
+        let accel_scaled_half_time_squared = self
             .accelerometer_noise
             .scale(0.5 * delta_time_squared)
             .cast::<T>();
-        let accel_scaled_5_6_time_cubed = self
+
+        let position_cross_term =
+            (0.5 * delta_time_squared * total_duration) - ((1.0 / 6.0) * delta_time_cubed);
+        let accel_scaled_position_cross = self
             .accelerometer_noise
-            .scale((5.0 / 6.0) * delta_time_cubed)
+            .scale(position_cross_term)
             .cast::<T>();
 
         let error_0 = gyro_scaled_time * lambda_0;
-        let error_1 = (accel_scaled_time * lambda_1) + (accel_scaled_1_5_time_squared * lambda_2);
+        let error_1 = (accel_scaled_time * lambda_1) + (accel_scaled_velocity_cross * lambda_2);
         let error_2 =
-            (accel_scaled_0_5_time_squared * lambda_1) + (accel_scaled_5_6_time_cubed * lambda_2);
+            (accel_scaled_half_time_squared * lambda_1) + (accel_scaled_position_cross * lambda_2);
 
         let mut error = SVector::<T, 9>::zeros();
         error.fixed_view_mut::<3, 1>(0, 0).copy_from(&error_0);
@@ -125,24 +135,34 @@ impl<T: Numeric> SE23SparseGaussianProcessSegment<T> {
 
         let delta_time = duration_previous.as_secs_f64();
         let delta_time_squared = delta_time * delta_time;
+        let total_duration = self.total_duration;
 
         let lambda_0 = self.interpolation_factor.fixed_view::<3, 1>(0, 0);
         let lambda_1 = self.interpolation_factor.fixed_view::<3, 1>(3, 0);
         let lambda_2 = self.interpolation_factor.fixed_view::<3, 1>(6, 0);
 
-        let gyro_noise_t = self.gyro_noise.cast::<T>();
-        let accelerometer_noise_t = self.accelerometer_noise.cast::<T>();
+        let gyro_noise_cast = self.gyro_noise.cast::<T>();
+        let accelerometer_noise_cast = self.accelerometer_noise.cast::<T>();
 
-        let accel_scaled_3_dt = self.accelerometer_noise.scale(3.0 * delta_time).cast::<T>();
-        let accel_scaled_dt = self.accelerometer_noise.scale(delta_time).cast::<T>();
-        let accel_scaled_2_5_dt_sq = self
+        let accel_scaled_time = self.accelerometer_noise.scale(delta_time).cast::<T>();
+
+        let velocity_rate_cross_term = total_duration - delta_time;
+        let accel_scaled_velocity_rate_cross = self
             .accelerometer_noise
-            .scale(2.5 * delta_time_squared)
+            .scale(velocity_rate_cross_term)
             .cast::<T>();
 
-        let block_0 = gyro_noise_t * lambda_0;
-        let block_1 = (accelerometer_noise_t * lambda_1) + (accel_scaled_3_dt * lambda_2);
-        let block_2 = (accel_scaled_dt * lambda_1) + (accel_scaled_2_5_dt_sq * lambda_2);
+        let position_rate_cross_term = (delta_time * total_duration) - (0.5 * delta_time_squared);
+        let accel_scaled_position_rate_cross = self
+            .accelerometer_noise
+            .scale(position_rate_cross_term)
+            .cast::<T>();
+
+        let block_0 = gyro_noise_cast * lambda_0;
+        let block_1 =
+            (accelerometer_noise_cast * lambda_1) + (accel_scaled_velocity_rate_cross * lambda_2);
+        let block_2 =
+            (accel_scaled_time * lambda_1) + (accel_scaled_position_rate_cross * lambda_2);
 
         let mut derivative = SVector::<T, 9>::zeros();
         derivative.fixed_view_mut::<3, 1>(0, 0).copy_from(&block_0);
@@ -201,5 +221,45 @@ mod tests {
         );
 
         dbg!(gp.infer(t_start + Duration::from_millis(500)));
+    }
+
+    #[test]
+    fn derivative() {
+        let now = SystemTime::UNIX_EPOCH;
+        let gp = SE23SparseGaussianProcessSegment::new(
+            now,
+            SE23::from_rot_vel_trans(SO3::identity(), vector![1.0, 0.0, 0.0], Vector3::zeros()),
+            now + Duration::from_secs(1),
+            SE23::from_rot_vel_trans(
+                SO3::identity(),
+                vector![1.0, 0.0, 0.0],
+                vector![1.0, 0.0, 0.0],
+            ),
+            Matrix3::identity(),
+            Matrix3::identity(),
+        );
+
+        let dt = Duration::from_millis(2);
+        let mut data = Vec::new();
+        let mut current = now;
+        loop {
+            let value = gp.infer(current);
+            let xyz = value.xyz().into_owned();
+            data.push((
+                current.duration_since(now).unwrap().as_secs_f32(),
+                xyz.as_slice().to_vec(),
+            ));
+            current += dt;
+            if current > now + Duration::from_secs(1) {
+                break;
+            }
+        }
+        println!("{}", serde_json::to_string(&data).unwrap());
+
+        dbg!(gp.infer(now));
+        dbg!(gp.infer(now + Duration::from_millis(500)));
+        dbg!(gp.infer(now + Duration::from_secs(1)));
+
+        dbg!(gp.infer_derivative(now + Duration::from_millis(500)));
     }
 }
