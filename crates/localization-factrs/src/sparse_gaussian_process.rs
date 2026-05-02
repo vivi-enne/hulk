@@ -1,6 +1,10 @@
 use std::time::SystemTime;
 
-use factrs::{linalg::Numeric, traits::Variable, variables::SE23};
+use factrs::{
+    linalg::Numeric,
+    traits::Variable,
+    variables::{MatrixLieGroup, SE23},
+};
 use nalgebra::{Matrix3, SMatrix, SVector};
 
 pub struct SE23SparseGaussianProcessSegment<T: Numeric> {
@@ -29,7 +33,17 @@ impl<T: Numeric> SE23SparseGaussianProcessSegment<T> {
         let covariance_between =
             Self::noise_covariance(&gyro_noise, &accelerometer_noise, total_duration).cast::<T>();
 
-        let relative_algebra_error = start_pose.inverse().compose(&end_pose).log();
+        let dt_t = T::from_f64(total_duration).unwrap();
+        let start_rot_inv = start_pose.rot().inverse();
+        let local_v0 = start_rot_inv.apply(start_pose.uvw());
+
+        let mut xi_pred = SVector::<T, 9>::zeros();
+        xi_pred
+            .fixed_view_mut::<3, 1>(6, 0)
+            .copy_from(&(local_v0 * dt_t));
+        let predicted_end_pose = start_pose.oplus_right(xi_pred.as_view());
+
+        let relative_algebra_error = predicted_end_pose.inverse().compose(&end_pose).log();
         let relative_algebra_error: SVector<T, 9> =
             SVector::from_column_slice(relative_algebra_error.as_slice());
 
@@ -75,12 +89,21 @@ impl<T: Numeric> SE23SparseGaussianProcessSegment<T> {
         let delta_time_cubed = delta_time_squared * delta_time;
         let total_duration = self.total_duration;
 
+        let dt_t = T::from_f64(delta_time).unwrap();
+        let start_rot_inv = self.start_pose.rot().inverse();
+        let local_v0 = start_rot_inv.apply(self.start_pose.uvw());
+
+        let mut xi_pred = SVector::<T, 9>::zeros();
+        xi_pred
+            .fixed_view_mut::<3, 1>(6, 0)
+            .copy_from(&(local_v0 * dt_t));
+        let predicted_pose = self.start_pose.oplus_right(xi_pred.as_view());
+
         let lambda_0 = self.interpolation_factor.fixed_view::<3, 1>(0, 0);
         let lambda_1 = self.interpolation_factor.fixed_view::<3, 1>(3, 0);
         let lambda_2 = self.interpolation_factor.fixed_view::<3, 1>(6, 0);
 
         let gyro_scaled_time = self.gyro_noise.scale(delta_time).cast::<T>();
-
         let accel_scaled_time = self.accelerometer_noise.scale(delta_time).cast::<T>();
 
         let velocity_cross_term = (delta_time * total_duration) - (0.5 * delta_time_squared);
@@ -111,7 +134,7 @@ impl<T: Numeric> SE23SparseGaussianProcessSegment<T> {
         error.fixed_view_mut::<3, 1>(3, 0).copy_from(&error_1);
         error.fixed_view_mut::<3, 1>(6, 0).copy_from(&error_2);
 
-        self.start_pose.oplus_right(error.as_view())
+        predicted_pose.oplus_right(error.as_view())
     }
 
     /// Computes the analytical time derivative of the local tangent space error.
