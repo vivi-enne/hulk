@@ -4,7 +4,7 @@ use booster::ImuState;
 use color_eyre::Result;
 use context_attribute::context;
 use factrs::{core::Vector3, linalg::Matrix3, traits::Variable, variables::SE23};
-use framework::{AdditionalOutput, PerceptionInput, deserialize_not_implemented};
+use framework::{AdditionalOutput, MainOutput, PerceptionInput, deserialize_not_implemented};
 use hardware::{CameraInterface, TimeInterface};
 use nalgebra::{Isometry3, Quaternion, Translation3, UnitQuaternion, vector};
 use serde::{Deserialize, Serialize};
@@ -31,7 +31,9 @@ pub struct CycleContext {
 }
 
 #[context]
-pub struct MainOutputs {}
+pub struct MainOutputs {
+    pub vins_loca: MainOutput<Option<Isometry3<f32>>>,
+}
 
 impl VinsLocalization {
     pub fn new(_context: CreationContext) -> Result<Self> {
@@ -81,15 +83,19 @@ impl VinsLocalization {
             }
         }
 
-        // self.frontend.last_optimization_result().map(|result| {
-        //     result.latest_pose
-        // })
+        let loca = self
+            .frontend
+            .last_optimization_result()
+            .map(|result| se23_to_isometry3(result.latest_pose));
+        dbg!(self.frontend.last_optimization_result());
 
         context
             .dead_reckoning
             .fill_if_subscribed(|| se23_to_isometry3(self.state.clone()));
 
-        Ok(MainOutputs {})
+        Ok(MainOutputs {
+            vins_loca: loca.into(),
+        })
     }
 }
 

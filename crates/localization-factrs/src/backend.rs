@@ -114,13 +114,14 @@ impl VinsBackend {
                 )
             })
         {
+            let interval_end_time = key + self.config.knot_spacing;
             let residual = IntervalGaussianProcessImuFactor::new(
                 chunk.collect(),
                 self.config.gyroscope_noise,
                 self.config.accelerometer_noise,
                 self.config.gravity,
                 key,
-                key + self.config.knot_spacing,
+                interval_end_time,
             );
             let interval_index =
                 get_interval_index(key, self.config.knot_spacing, self.start_time) as u32;
@@ -129,6 +130,7 @@ impl VinsBackend {
             let values = self.values.get_or_insert_default();
             values.insert(State(interval_index), SE23::identity());
             values.insert(State(interval_index + 1), SE23::identity());
+            self.last_knot_time = Some(interval_end_time);
         }
 
         Ok(())
@@ -136,6 +138,7 @@ impl VinsBackend {
 
     fn optimize(&mut self) -> Option<OptimizationResult> {
         let values = self.values.take().unwrap_or_default();
+        log::info!("solving graph with {} values", values.len());
         let result = self.optimizer.optimize(values);
 
         match result {

@@ -4,6 +4,7 @@ use crate::{
 };
 
 pub mod backend;
+mod camera_intrinsics;
 mod frontend;
 pub mod imu_factor;
 pub mod measurements;
