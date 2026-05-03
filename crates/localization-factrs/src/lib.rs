@@ -7,6 +7,7 @@ pub mod backend;
 mod camera_intrinsics;
 mod frontend;
 pub mod imu_factor;
+mod landmark_factor;
 pub mod measurements;
 pub mod node;
 pub mod sparse_gaussian_process;

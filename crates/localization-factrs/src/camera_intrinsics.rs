@@ -8,7 +8,7 @@ use factrs::{
 use nalgebra::{Const, Vector2, VectorView3, vector};
 
 #[derive(Clone, Debug)]
-pub struct CameraIntrinsics<T: Numeric> {
+pub struct CameraIntrinsics<T: Numeric = f64> {
     storage: VectorVar4<T>,
 }
 

@@ -1,9 +1,5 @@
-use factrs::{
-    assign_symbols,
-    variables::{ImuBias, SE23},
-};
+use crate::camera_intrinsics::CameraIntrinsics as CI;
+use factrs::{assign_symbols, variables::SE23};
 
-assign_symbols!(
-    State: SE23;
-    B: ImuBias;
-);
+assign_symbols!(State: SE23);
+assign_symbols!(CameraIntrinsics: CI);

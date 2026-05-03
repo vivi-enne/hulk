@@ -1,7 +1,8 @@
 use std::time::SystemTime;
 
 use factrs::{
-    core::Vector3,
+    containers::Key,
+    core::{Values, Vector3},
     linalg::{ForwardProp, Matrix3, Numeric, VectorX},
     traits::{Diff, Residual, Variable},
     variables::{MatrixLieGroup, SE23},
@@ -10,6 +11,7 @@ use nalgebra::Const;
 
 use crate::{
     measurements::ImuMeasurement, sparse_gaussian_process::SE23SparseGaussianProcessSegment,
+    symbols::State,
 };
 
 #[derive(Debug, Clone)]
@@ -37,32 +39,33 @@ impl Residual for IntervalGaussianProcessImuFactor {
         self.measurements.len() * 6
     }
 
-    fn residual(&self, values: &factrs::core::Values, keys: &[factrs::containers::Key]) -> VectorX {
-        let [k1, k2] = keys else {
-            panic!("expected 2 keys")
-        };
-        let v1 = values.get_unchecked::<_, SE23>(*k1).unwrap();
-        let v2 = values.get_unchecked::<_, SE23>(*k2).unwrap();
-        self.residuals_on_spline(v1.clone(), v2.clone())
+    fn residual(&self, values: &Values, keys: &[Key]) -> VectorX {
+        let (start, end) = unwrap_values(values, keys);
+        self.residuals_on_spline(start.clone(), end.clone())
     }
 
     fn residual_jacobian(
         &self,
-        values: &factrs::core::Values,
-        keys: &[factrs::containers::Key],
+        values: &Values,
+        keys: &[Key],
     ) -> factrs::linalg::DiffResult<VectorX, factrs::linalg::MatrixX> {
-        let [k1, k2] = keys else {
-            panic!("expected 2 keys")
-        };
-        let v1 = values.get_unchecked::<_, SE23>(*k1).unwrap();
-        let v2 = values.get_unchecked::<_, SE23>(*k2).unwrap();
+        let (start, end) = unwrap_values(values, keys);
 
         ForwardProp::<Const<18>>::jacobian_2(
             |start, end| self.residuals_on_spline(start, end),
-            v1,
-            v2,
+            start,
+            end,
         )
     }
+}
+
+fn unwrap_values<'a>(values: &'a Values, keys: &[Key]) -> (&'a SE23, &'a SE23) {
+    let [k1, k2] = keys else {
+        panic!("expected 2 keys")
+    };
+    let v1 = values.get_unchecked::<_, SE23>(*k1).unwrap();
+    let v2 = values.get_unchecked::<_, SE23>(*k2).unwrap();
+    (v1, v2)
 }
 
 impl IntervalGaussianProcessImuFactor {
