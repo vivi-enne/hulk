@@ -251,7 +251,7 @@ mod tests {
         let now = SystemTime::UNIX_EPOCH;
         let gp = SE23SparseGaussianProcessSegment::new(
             now,
-            SE23::from_rot_vel_trans(SO3::identity(), vector![1.0, 0.0, 0.0], Vector3::zeros()),
+            SE23::from_rot_vel_trans(SO3::identity(), vector![2.0, 0.0, 0.0], Vector3::zeros()),
             now + Duration::from_secs(1),
             SE23::from_rot_vel_trans(
                 SO3::identity(),

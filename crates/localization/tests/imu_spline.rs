@@ -1,4 +1,4 @@
-use std::time::{Duration, SystemTime};
+use std::time::{Duration, Instant, SystemTime};
 
 use booster::ImuState;
 use factrs::{core::SO3, traits::Variable, variables::SE23};
@@ -48,14 +48,18 @@ fn imu_on_spline() {
                 .fixed_view::<3, 1>(3, 0)
                 .into_owned()
                 .cast::<f32>()
-                .framed(),
+                .framed()
+                + linear_algebra::vector!(0.0, 0.0, 9.81),
             roll_pitch_yaw: Vector3::zeros().framed(),
         };
-
         frontend
             .ingest_imu(time, imu)
             .expect("failed to ingest imu");
-
-        backend.solve_once().expect("failed to solve")
     }
+    let now = Instant::now();
+    backend.solve_once().expect("failed to solve");
+    let solve_duration = now.elapsed();
+    println!("Optimization took {}ms", solve_duration.as_millis());
+    let result = frontend.last_optimization_result().expect("no result");
+    dbg!(result);
 }

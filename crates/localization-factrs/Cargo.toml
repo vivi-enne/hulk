@@ -9,7 +9,7 @@ homepage.workspace = true
 booster.workspace = true
 color-eyre.workspace = true
 context_attribute.workspace = true
-factrs = { git = "https://github.com/oleflb/fact-rs.git", rev = "be79625b0a7eef228aafa8ff78d16022d77389c1" }
+factrs = { git = "https://github.com/oleflb/fact-rs.git", rev = "a81179047c6524880d3c39ef1103ab15ed2a14af" }
 faer = "0.24.0"
 framework.workspace = true
 hardware.workspace = true

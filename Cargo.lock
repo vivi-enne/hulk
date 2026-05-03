@@ -4000,7 +4000,7 @@ dependencies = [
 [[package]]
 name = "factrs"
 version = "0.3.0"
-source = "git+https://github.com/oleflb/fact-rs.git?rev=be79625b0a7eef228aafa8ff78d16022d77389c1#be79625b0a7eef228aafa8ff78d16022d77389c1"
+source = "git+https://github.com/oleflb/fact-rs.git?rev=a81179047c6524880d3c39ef1103ab15ed2a14af#a81179047c6524880d3c39ef1103ab15ed2a14af"
 dependencies = [
  "downcast-rs 2.0.2",
  "dyn-clone",
@@ -4022,7 +4022,7 @@ dependencies = [
 [[package]]
 name = "factrs-proc"
 version = "0.3.0"
-source = "git+https://github.com/oleflb/fact-rs.git?rev=be79625b0a7eef228aafa8ff78d16022d77389c1#be79625b0a7eef228aafa8ff78d16022d77389c1"
+source = "git+https://github.com/oleflb/fact-rs.git?rev=a81179047c6524880d3c39ef1103ab15ed2a14af#a81179047c6524880d3c39ef1103ab15ed2a14af"
 dependencies = [
  "proc-macro2",
  "quote",

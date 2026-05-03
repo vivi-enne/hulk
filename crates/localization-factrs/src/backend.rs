@@ -2,12 +2,12 @@ use std::time::{Duration, SystemTime};
 
 use factrs::{
     assign_symbols,
-    containers::ValuesOrder,
-    core::{GaussNewton, Graph, Values, Vector3},
+    containers::FactorBuilderDyn,
+    core::{GaussNewton, Graph, PriorResidual, Values, Vector3},
     fac,
-    linalg::{DiffResult, Matrix3},
+    linalg::Matrix3,
     optimizers::OptError,
-    traits::{Optimizer, Variable},
+    traits::{Optimizer, Residual, Variable},
     variables::SE23,
 };
 use itertools::Itertools;
@@ -132,15 +132,20 @@ impl VinsBackend {
             );
             let interval_index =
                 get_interval_index(key, self.config.knot_spacing, self.start_time) as u32;
-            let factor = fac![residual, (State(interval_index), State(interval_index + 1))];
+            dbg!(residual.dim_out());
+            let factor =
+                FactorBuilderDyn::new(residual, [State(interval_index), State(interval_index + 1)])
+                    .build();
             self.optimizer.graph_mut().add_factor(factor);
+            if self.values.is_none() {
+                let factor = fac![PriorResidual::new(SE23::identity()), State(interval_index)];
+                self.optimizer.graph_mut().add_factor(factor);
+            }
             let values = self.values.get_or_insert_default();
             values.insert(State(interval_index), SE23::identity());
             values.insert(State(interval_index + 1), SE23::identity());
-            dbg!(values);
             self.last_knot_time = Some(interval_end_time);
         }
-        dbg!(&self.values);
 
         Ok(())
     }
@@ -148,12 +153,6 @@ impl VinsBackend {
     fn optimize(&mut self) -> Option<OptimizationResult> {
         let values = self.values.take().unwrap_or_default();
         log::info!("solving graph with {} values", values.len());
-        let linear_graph = self.optimizer.graph_mut().linearize(&values);
-        let graph_order = linear_graph.sparsity_pattern(ValuesOrder::from_values(&values));
-        let DiffResult { value: r, diff: j } = linear_graph.residual_jacobian(&graph_order);
-        dbg!(j.to_dense());
-        dbg!(r);
-
         let result = self.optimizer.optimize(values);
 
         match result {
