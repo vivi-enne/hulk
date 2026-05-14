@@ -45,7 +45,7 @@ def _(mo):
 def _(mo):
     from pathlib import Path
 
-    from mujoco import MjData, MjModel, Renderer, mj_step
+    from mujoco import MjData, MjModel, Renderer, mj_step, mj_resetData, mj_forward
     from workshop import MujocoViewer
     import os
 
@@ -60,8 +60,8 @@ def _(mo):
     interval = 0.1
 
     def advance_simulation(
-        mj_model: MjModel, 
-        mj_data: MjData, 
+        mj_model: MjModel,
+        mj_data: MjData,
         dt: float,
     ) -> None:
         n_steps = int(dt / model.opt.timestep / 2)
@@ -73,9 +73,20 @@ def _(mo):
         rendered_pixels = renderer.render()
         viewer.update(rendered_pixels)
 
+    def reset_simulation(_):
+        mj_resetData(model, data)
+        mj_forward(model, data)
 
+        renderer.update_scene(data, camera="overview_cam")
+        rendered_pixels = renderer.render()
+        viewer.update(rendered_pixels)
+
+    restart_btn = mo.ui.button(label="🔄 Simulation neustarten", on_change=reset_simulation)
     refresh_timer = mo.ui.refresh(default_interval=interval, on_change=update)
-    mo.vstack([refresh_timer, viewer])
+
+    mo.vstack([mo.hstack([refresh_timer, restart_btn]), viewer])
+    return
+
     return
 
 
