@@ -3,14 +3,15 @@ use std::time::{Duration, Instant, SystemTime};
 use booster::ImuState;
 use factrs::{core::SO3, traits::Variable, variables::SE23};
 use linear_algebra::IntoFramed;
-use localization::{
-    backend::BackendConfiguration, sparse_gaussian_process::SE23SparseGaussianProcessSegment,
+use localization_factrs::{
+    backend::BackendConfiguration, initialize,
+    sparse_gaussian_process::SE23SparseGaussianProcessSegment,
 };
 use nalgebra::{Matrix3, Vector3, vector};
 
 #[test]
 fn imu_on_spline() {
-    let (mut frontend, mut backend) = localization::initialize(BackendConfiguration {
+    let (mut frontend, mut backend) = initialize(BackendConfiguration {
         knot_spacing: Duration::from_millis(200),
         max_optimization_window: Duration::from_secs(1),
         gyroscope_noise: Matrix3::identity() * 0.01,

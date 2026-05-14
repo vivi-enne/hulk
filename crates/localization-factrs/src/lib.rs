@@ -6,6 +6,7 @@ use crate::{
 pub mod backend;
 mod camera_intrinsics;
 mod frontend;
+pub mod gaussian_process_prior_factor;
 pub mod imu_factor;
 mod landmark_factor;
 pub mod measurements;

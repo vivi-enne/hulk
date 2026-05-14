@@ -11,7 +11,6 @@ use nalgebra::Const;
 
 use crate::{
     measurements::ImuMeasurement, sparse_gaussian_process::SE23SparseGaussianProcessSegment,
-    symbols::State,
 };
 
 #[derive(Debug, Clone)]

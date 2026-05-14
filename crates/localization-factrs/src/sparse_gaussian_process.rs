@@ -196,7 +196,7 @@ impl<T: Numeric> SE23SparseGaussianProcessSegment<T> {
     }
 
     #[allow(non_snake_case)]
-    fn noise_covariance(
+    pub fn noise_covariance(
         gyro_noise: &Matrix3<f64>,
         accelerometer_noise: &Matrix3<f64>,
         dt: f64,

@@ -4,14 +4,13 @@ use factrs::{
     containers::Key,
     core::Values,
     linalg::{ForwardProp, Numeric, VectorX},
-    traits::{Diff, Residual},
+    traits::{Diff, Residual, Variable},
     variables::{MatrixLieGroup, SE23},
 };
-use nalgebra::{Const, Matrix3, Point2, Point3};
+use nalgebra::{Const, Matrix3, Point2, Point3, Vector2};
 
 use crate::{
     camera_intrinsics::CameraIntrinsics, sparse_gaussian_process::SE23SparseGaussianProcessSegment,
-    symbols::State,
 };
 
 #[derive(Debug, Clone)]
@@ -44,7 +43,7 @@ impl Residual for LandmarkFactor {
     }
 
     fn dim_out(&self) -> usize {
-        self.features.len()
+        self.features.len() * 2
     }
 
     fn residual(&self, values: &Values, keys: &[Key]) -> factrs::linalg::VectorX {
@@ -99,19 +98,27 @@ impl LandmarkFactor {
         let mut residuals = VectorX::<T>::zeros(self.features.len());
         for (index, measurement) in self.features.iter().enumerate() {
             let state = spline.infer(measurement.time);
+            let state_inverse = state.inverse();
             let detection = measurement.feature.cast::<T>();
-            let residual = measurement
+            let best_residual = measurement
                 .candidates
                 .iter()
-                // Apply robot transform
-                .map(|global| state.apply(global.cast::<T>().coords.as_view()))
-                // TODO: Apply camera extrinsic transform
-                .map(|robot| robot)
-                // Transform to camera space
-                .map(|camera| intrinsics.project(camera.as_view()))
-                .map(|projection| (detection - projection).coords.norm())
-                .softmin(self.sharpness);
-            residuals[index] = residual;
+                .map(|global_point| {
+                    let robot_point =
+                        state_inverse.apply(global_point.cast::<T>().coords.as_view());
+                    // TODO: Apply Camera Extrinsics here (T_CR * robot_point)
+                    let projection = intrinsics.project(robot_point.as_view());
+                    let error_vector = detection.coords - projection;
+                    let squared_error = error_vector.norm_squared();
+                    (error_vector, squared_error)
+                })
+                .min_by(|a, b| a.1.partial_cmp(&b.1).unwrap())
+                .map(|(error_vector, _)| error_vector)
+                .unwrap_or_else(|| Vector2::zeros());
+
+            residuals
+                .fixed_view_mut::<2, 1>(index * 2, 0)
+                .copy_from(&best_residual);
         }
         residuals
     }

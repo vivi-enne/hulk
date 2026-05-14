@@ -13,7 +13,10 @@ use factrs::{
 use itertools::Itertools;
 use thiserror::Error;
 
-use crate::{imu_factor::IntervalGaussianProcessImuFactor, measurements::SensorMeasurement};
+use crate::{
+    gaussian_process_prior_factor::GaussianProcessPriorFactor,
+    imu_factor::IntervalGaussianProcessImuFactor, measurements::SensorMeasurement,
+};
 
 use tokio::sync::{
     mpsc::{UnboundedReceiver, error::TryRecvError},
@@ -137,6 +140,19 @@ impl VinsBackend {
                 FactorBuilderDyn::new(residual, [State(interval_index), State(interval_index + 1)])
                     .build();
             self.optimizer.graph_mut().add_factor(factor);
+
+            let prior_residual = GaussianProcessPriorFactor::new(
+                self.config.knot_spacing.as_secs_f64(),
+                &self.config.gyroscope_noise,
+                &self.config.accelerometer_noise,
+            );
+            let prior_factor = FactorBuilderDyn::new(
+                prior_residual,
+                [State(interval_index), State(interval_index + 1)],
+            )
+            .build();
+            self.optimizer.graph_mut().add_factor(prior_factor);
+
             if self.values.is_none() {
                 let factor = fac![PriorResidual::new(SE23::identity()), State(interval_index)];
                 self.optimizer.graph_mut().add_factor(factor);
