@@ -65,6 +65,7 @@ pub fn collect_hulk_cyclers(root: impl AsRef<Path>) -> Result<Cyclers, Error> {
                 nodes: vec![
                     "world_state::active_vision",
                     "localization::node",
+                    "localization-factrs::node",
                     "world_state::ball_filter",
                     "world_state::ball_state_composer",
                     "world_state::behavior::node",

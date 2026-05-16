@@ -11,6 +11,7 @@ pub mod imu_factor;
 mod landmark_factor;
 pub mod measurements;
 pub mod node;
+pub mod schur_marginalization;
 pub mod sparse_gaussian_process;
 pub mod symbols;
 

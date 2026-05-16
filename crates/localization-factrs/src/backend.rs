@@ -1,7 +1,6 @@
 use std::time::{Duration, SystemTime};
 
 use factrs::{
-    assign_symbols,
     containers::FactorBuilderDyn,
     core::{GaussNewton, Graph, PriorResidual, Values, Vector3},
     fac,
@@ -16,16 +15,13 @@ use thiserror::Error;
 use crate::{
     gaussian_process_prior_factor::GaussianProcessPriorFactor,
     imu_factor::IntervalGaussianProcessImuFactor, measurements::SensorMeasurement,
+    schur_marginalization::marginalize, symbols::State,
 };
 
 use tokio::sync::{
     mpsc::{UnboundedReceiver, error::TryRecvError},
     watch,
 };
-
-assign_symbols!(
-    State: SE23;
-);
 
 pub struct BackendConfiguration {
     /// The spacing between control knots on the Gaussian Process
@@ -167,8 +163,19 @@ impl VinsBackend {
     }
 
     fn optimize(&mut self) -> Option<OptimizationResult> {
-        let values = self.values.take().unwrap_or_default();
+        let mut values = self.values.take().unwrap_or_default();
         log::info!("solving graph with {} values", values.len());
+
+        // do Schur marginalization
+        let cutoff_time = SystemTime::now() - self.config.max_optimization_window;
+        let smallest_interval_index_in_window =
+            get_interval_index(cutoff_time, self.config.knot_spacing, self.start_time) as u32;
+        marginalize(
+            &mut self.optimizer,
+            &mut values,
+            smallest_interval_index_in_window,
+        );
+
         let result = self.optimizer.optimize(values);
 
         match result {
