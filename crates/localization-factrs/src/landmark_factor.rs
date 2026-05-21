@@ -123,24 +123,3 @@ impl LandmarkFactor {
         residuals
     }
 }
-
-trait SoftminExt {
-    type Output;
-
-    /// Computes the softmin using log-sum-exp.
-    /// `alpha` controls the sharpness where a larger values means the `softmin` operation is closer to a hard `min`.
-    fn softmin(self, alpha: f64) -> Self::Output;
-}
-
-impl<Iter, T> SoftminExt for Iter
-where
-    Iter: IntoIterator<Item = T>,
-    T: Numeric,
-{
-    type Output = T;
-
-    fn softmin(self, alpha: f64) -> Self::Output {
-        let v = self.into_iter().map(|s| (-s * alpha).exp()).sum::<T>();
-        -v.ln() / alpha
-    }
-}

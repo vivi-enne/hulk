@@ -6845,6 +6845,7 @@ name = "localization-factrs"
 version = "0.1.0"
 dependencies = [
  "booster",
+ "clap",
  "color-eyre",
  "context_attribute",
  "factrs",
