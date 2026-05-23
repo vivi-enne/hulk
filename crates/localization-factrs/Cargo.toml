@@ -26,3 +26,4 @@ serde_json.workspace = true
 
 # Only for bin
 clap.workspace = true
+indicatif.workspace = true
