@@ -3,21 +3,9 @@ name = "visual_odometry_rust"
 version = "0.1.0"
 edition = "2024"
 
-[lib]
-name = "visual_odometry_rust"
-crate-type = ["cdylib", "rlib"]
-
-
 [dependencies]
 coordinate_systems = { workspace = true }
-image = { workspace = true, features = ["png"] }
 linear_algebra = { workspace = true }
 ndarray = { workspace = true }
-numpy = "0.27.0"
 ort = { workspace = true }
-pyo3 = { workspace = true, features = ["auto-initialize", "abi3-py310"]}
 thiserror = { workspace = true }
-
-[features]
-extension-module = ["pyo3/extension-module"]
-default = []

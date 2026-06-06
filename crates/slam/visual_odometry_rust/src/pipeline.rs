@@ -6,7 +6,7 @@ use thiserror::Error;
 
 use crate::{
     feature_extractor::{XFeatError, XFeatModel},
-    matcher_3d_python::{Matcher3DError, Matcher3DPython},
+    matcher_3d::{Matcher3D, Matcher3DError},
 };
 
 #[derive(Debug, Error)]
@@ -19,7 +19,7 @@ pub enum VisualOdometryError {
 
 pub struct VisualOdometryPipeline {
     extractor: XFeatModel,
-    matcher: Matcher3DPython,
+    matcher: Matcher3D,
 }
 
 pub struct VisualOdometryParameters {
@@ -31,8 +31,7 @@ pub struct VisualOdometryParameters {
 impl VisualOdometryPipeline {
     pub fn new(params: VisualOdometryParameters) -> Result<Self, VisualOdometryError> {
         let extractor = XFeatModel::new(&params.xfeat_model_path)?;
-        let matcher =
-            Matcher3DPython::initialize(params.left_calibration, params.right_calibration)?;
+        let matcher = Matcher3D::initialize(params.left_calibration, params.right_calibration)?;
         Ok(Self { extractor, matcher })
     }
 
@@ -43,6 +42,6 @@ impl VisualOdometryPipeline {
     ) -> Result<Isometry3<f32>, VisualOdometryError> {
         let features = self.extractor.extract(left_image, right_image)?;
         let odometry = self.matcher.step(features)?;
-        Ok(odometry.isometry.isometry)
+        Ok(odometry.isometry)
     }
 }

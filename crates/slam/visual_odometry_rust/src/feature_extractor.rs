@@ -2,17 +2,14 @@ use std::path::Path;
 
 use ndarray::{Array4, ArrayView2, Ix2, Ix3, Zip, s};
 use ort::{
-    execution_providers::{
-        ROCmExecutionProvider, TensorRTExecutionProvider, WebGPUExecutionProvider,
-    },
+    execution_providers::TensorRTExecutionProvider,
     inputs,
     session::{Session, builder::GraphOptimizationLevel},
-    sys::OrtApi,
     value::TensorRef,
 };
 use thiserror::Error;
 
-use crate::interface::XFeatOutput;
+use crate::features::XFeatOutput;
 
 #[derive(Debug, Error)]
 pub enum XFeatError {
