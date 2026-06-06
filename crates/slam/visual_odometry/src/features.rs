@@ -1,14 +1,14 @@
 use ndarray::{Array2, Array3, ArrayView2, ArrayView3};
 
 #[derive(Debug, Clone)]
-pub struct XFeatOutput {
-    pub keypoints: Array3<i64>,
-    pub scores: Array2<f32>,
-    pub descriptors: Array3<f32>,
+pub(crate) struct XFeatOutput {
+    pub(crate) keypoints: Array3<i64>,
+    pub(crate) scores: Array2<f32>,
+    pub(crate) descriptors: Array3<f32>,
 }
 
 impl XFeatOutput {
-    pub fn new(
+    pub(crate) fn new(
         keypoints: ArrayView3<'_, i64>,
         scores: ArrayView2<'_, f32>,
         descriptors: ArrayView3<'_, f32>,

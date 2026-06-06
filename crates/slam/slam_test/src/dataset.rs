@@ -7,8 +7,6 @@ use ndarray::{Array2, Array3};
 pub struct KittiOdometryCalibration {
     pub p0: Array2<f32>,
     pub p1: Array2<f32>,
-    pub p2: Array2<f32>,
-    pub p3: Array2<f32>,
 }
 
 pub struct KittiOdometryItem {
@@ -87,12 +85,12 @@ impl KittiOdometryCalibration {
         if projections.len() != 4 {
             bail!("expected 4 projections, got {content}")
         }
-        let p3 = Array2::from_shape_vec((3, 4), projections.pop().unwrap()?)?;
-        let p2 = Array2::from_shape_vec((3, 4), projections.pop().unwrap()?)?;
+        let _p3 = Array2::from_shape_vec((3, 4), projections.pop().unwrap()?)?;
+        let _p2 = Array2::from_shape_vec((3, 4), projections.pop().unwrap()?)?;
         let p1 = Array2::from_shape_vec((3, 4), projections.pop().unwrap()?)?;
         let p0 = Array2::from_shape_vec((3, 4), projections.pop().unwrap()?)?;
 
-        Ok(Self { p0, p1, p2, p3 })
+        Ok(Self { p0, p1 })
     }
 }
 

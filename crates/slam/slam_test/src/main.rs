@@ -2,9 +2,9 @@ use std::path::PathBuf;
 
 use clap::Parser;
 use color_eyre::eyre::{Context, Result};
-use indicatif::{ProgressBarIter, ProgressIterator, ProgressStyle};
+use indicatif::{ProgressIterator, ProgressStyle};
 use ndarray::s;
-use visual_odometry_rust::{VisualOdometryParameters, VisualOdometryPipeline};
+use visual_odometry::{Parameters, Pipeline};
 
 use crate::{dataset::KittiOdometrySequence, gui::VisualOdometryGui};
 
@@ -28,7 +28,7 @@ pub fn main() -> Result<()> {
     let args = Arguments::parse();
 
     let sequence = KittiOdometrySequence::from_path(args.sequence)?;
-    let mut pipeline = VisualOdometryPipeline::new(VisualOdometryParameters {
+    let mut pipeline = Pipeline::new(Parameters {
         xfeat_model_path: args.xfeat,
         left_calibration: sequence.calibration.p0.clone(),
         right_calibration: sequence.calibration.p1.clone(),

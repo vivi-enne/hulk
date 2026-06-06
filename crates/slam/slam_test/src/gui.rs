@@ -9,13 +9,13 @@ use eframe::{
 use egui_plot::{Line, Plot, PlotPoint, PlotPoints};
 use linear_algebra::{IntoTransform, Pose3};
 use ndarray::{ArrayView3, s};
-use visual_odometry_rust::VisualOdometryPipeline;
+use visual_odometry::Pipeline;
 
 use crate::dataset::KittiOdometrySequence;
 
 pub struct VisualOdometryGui {
     sequence: KittiOdometrySequence,
-    vo: VisualOdometryPipeline,
+    vo: Pipeline,
     next_index: usize,
     state: Option<PreviousState>,
 }
@@ -28,10 +28,7 @@ struct PreviousState {
 }
 
 impl VisualOdometryGui {
-    pub fn start(
-        sequence: KittiOdometrySequence,
-        pipeline: VisualOdometryPipeline,
-    ) -> eframe::Result<()> {
+    pub fn start(sequence: KittiOdometrySequence, pipeline: Pipeline) -> eframe::Result<()> {
         eframe::run_native(
             "Visual Odometry",
             NativeOptions::default(),
@@ -39,11 +36,7 @@ impl VisualOdometryGui {
         )
     }
 
-    fn new(
-        _cc: &CreationContext,
-        sequence: KittiOdometrySequence,
-        pipeline: VisualOdometryPipeline,
-    ) -> Self {
+    fn new(_cc: &CreationContext, sequence: KittiOdometrySequence, pipeline: Pipeline) -> Self {
         Self {
             sequence,
             vo: pipeline,

@@ -19,7 +19,7 @@ const PNP_RANSAC_REPROJECTION_THRESHOLD: f32 = 6.0;
 const POSE_REFINEMENT_ITERATIONS: usize = 10;
 
 #[derive(Debug, Error)]
-pub enum Matcher3DError {
+pub(crate) enum Matcher3DError {
     #[error("{name} calibration has shape {actual:?}, expected [3, 4]")]
     InvalidCalibrationShape {
         name: &'static str,
@@ -37,25 +37,17 @@ pub enum Matcher3DError {
     DescriptorDimensionMismatch { left: usize, right: usize },
 }
 
-pub struct Matcher3D {
+pub(crate) struct Matcher3D {
     left_projection: ProjectionMatrix,
     right_projection: ProjectionMatrix,
     left_intrinsics: Matrix3<f32>,
     left_intrinsics_inverse: Matrix3<f32>,
     previous_features: Option<ExtractedFeatures>,
     previous_points: Vec<Point3<f32>>,
-    candidate_tracker: LandmarkCandidateTracker,
-}
-
-#[derive(Debug, Clone)]
-pub struct MatcherOutput {
-    pub isometry: Isometry3<f32>,
-    pub proposed_points: Array2<f32>,
-    pub proposed_descriptors: Array2<f32>,
 }
 
 impl Matcher3D {
-    pub fn initialize(
+    pub(crate) fn initialize(
         left_calibration: Array2<f32>,
         right_calibration: Array2<f32>,
     ) -> Result<Self, Matcher3DError> {
@@ -73,11 +65,10 @@ impl Matcher3D {
             left_intrinsics_inverse,
             previous_features: None,
             previous_points: Vec::new(),
-            candidate_tracker: LandmarkCandidateTracker::default(),
         })
     }
 
-    pub fn step(&mut self, features: XFeatOutput) -> Result<MatcherOutput, Matcher3DError> {
+    pub(crate) fn step(&mut self, features: XFeatOutput) -> Result<Isometry3<f32>, Matcher3DError> {
         let (left, right) = xfeat_to_features(&features)?;
         let (left_matches, right_matches) = match_descriptors(&left, &right)?;
         let left_filtered = left.select_indices(&left_matches);
@@ -94,7 +85,7 @@ impl Matcher3D {
         let Some(previous_features) = &self.previous_features else {
             self.previous_features = Some(left_non_singular);
             self.previous_points = triangulation.points;
-            return Ok(MatcherOutput::empty(left.descriptor_dimensions));
+            return Ok(Isometry3::identity());
         };
 
         let (previous_matches, current_matches) =
@@ -117,31 +108,10 @@ impl Matcher3D {
         )
         .unwrap_or_else(Isometry3::identity);
 
-        let (proposed_points, proposed_descriptors) = self.candidate_tracker.update(
-            &triangulation.points,
-            &left_non_singular,
-            &previous_matches,
-            &current_matches,
-        );
-
         self.previous_points = triangulation.points;
         self.previous_features = Some(left_non_singular);
 
-        Ok(MatcherOutput {
-            isometry,
-            proposed_points,
-            proposed_descriptors,
-        })
-    }
-}
-
-impl MatcherOutput {
-    fn empty(descriptor_dimensions: usize) -> Self {
-        Self {
-            isometry: Isometry3::identity(),
-            proposed_points: Array2::zeros((0, 3)),
-            proposed_descriptors: Array2::zeros((0, descriptor_dimensions)),
-        }
+        Ok(isometry)
     }
 }
 
@@ -198,68 +168,6 @@ impl ExtractedFeatures {
 struct TriangulationOutput {
     points: Vec<Point3<f32>>,
     non_singular_mask: Vec<bool>,
-}
-
-#[derive(Debug)]
-struct LandmarkCandidateTracker {
-    minimum_consecutive_frames: u32,
-    feature_track_counts: Option<Vec<u32>>,
-}
-
-impl Default for LandmarkCandidateTracker {
-    fn default() -> Self {
-        Self {
-            minimum_consecutive_frames: 3,
-            feature_track_counts: None,
-        }
-    }
-}
-
-impl LandmarkCandidateTracker {
-    fn update(
-        &mut self,
-        current_points: &[Point3<f32>],
-        current_features: &ExtractedFeatures,
-        previous_match_indices: &[usize],
-        current_match_indices: &[usize],
-    ) -> (Array2<f32>, Array2<f32>) {
-        let Some(previous_track_counts) = &self.feature_track_counts else {
-            self.feature_track_counts = Some(vec![1; current_features.len()]);
-            return (
-                Array2::zeros((0, 3)),
-                Array2::zeros((0, current_features.descriptor_dimensions)),
-            );
-        };
-
-        let mut current_track_counts = vec![1; current_features.len()];
-        for (&previous_index, &current_index) in
-            previous_match_indices.iter().zip(current_match_indices)
-        {
-            if let Some(previous_count) = previous_track_counts.get(previous_index) {
-                current_track_counts[current_index] = previous_count + 1;
-            }
-        }
-
-        let mature_indices = current_track_counts
-            .iter()
-            .enumerate()
-            .filter_map(|(index, &count)| {
-                (count == self.minimum_consecutive_frames).then_some(index)
-            })
-            .collect::<Vec<_>>();
-
-        let proposed_points = points_to_array(
-            &mature_indices
-                .iter()
-                .map(|&index| current_points[index])
-                .collect::<Vec<_>>(),
-        );
-        let proposed_descriptors = descriptors_to_array(current_features, &mature_indices);
-
-        self.feature_track_counts = Some(current_track_counts);
-
-        (proposed_points, proposed_descriptors)
-    }
 }
 
 fn projection_from_array(
@@ -908,17 +816,6 @@ fn sample_indices(total: usize, iteration: usize) -> [usize; MINIMUM_PNP_CORRESP
     }
 
     indices
-}
-
-fn points_to_array(points: &[Point3<f32>]) -> Array2<f32> {
-    Array2::from_shape_fn((points.len(), 3), |(row, column)| points[row][column])
-}
-
-fn descriptors_to_array(features: &ExtractedFeatures, indices: &[usize]) -> Array2<f32> {
-    Array2::from_shape_fn(
-        (indices.len(), features.descriptor_dimensions),
-        |(row, column)| features.descriptor(indices[row])[column],
-    )
 }
 
 #[cfg(test)]

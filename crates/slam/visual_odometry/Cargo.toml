@@ -1,5 +1,5 @@
 [package]
-name = "visual_odometry_rust"
+name = "visual_odometry"
 version = "0.1.0"
 edition = "2024"
 
@@ -9,3 +9,11 @@ linear_algebra = { workspace = true }
 ndarray = { workspace = true }
 ort = { workspace = true }
 thiserror = { workspace = true }
+
+[dev-dependencies]
+criterion = { version = "0.5" }
+image = { workspace = true, features = ["png"] }
+
+[[bench]]
+name = "fps"
+harness = false

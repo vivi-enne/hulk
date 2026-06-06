@@ -12,7 +12,7 @@ use thiserror::Error;
 use crate::features::XFeatOutput;
 
 #[derive(Debug, Error)]
-pub enum XFeatError {
+pub(crate) enum XFeatError {
     #[error("model not loaded")]
     OrtError(#[from] ort::Error),
     #[error(
@@ -37,13 +37,13 @@ pub enum XFeatError {
     UnexpectedDimensionality(#[from] ndarray::ShapeError),
 }
 
-pub struct XFeatModel {
+pub(crate) struct XFeatModel {
     model: Session,
     storage: Option<Array4<f32>>,
 }
 
 impl XFeatModel {
-    pub fn new(model_path: impl AsRef<Path>) -> Result<Self, XFeatError> {
+    pub(crate) fn new(model_path: impl AsRef<Path>) -> Result<Self, XFeatError> {
         let model = Session::builder()?
             .with_optimization_level(GraphOptimizationLevel::Level3)?
             .with_execution_providers([TensorRTExecutionProvider::default().build()])?
@@ -54,7 +54,7 @@ impl XFeatModel {
         })
     }
 
-    pub fn extract(
+    pub(crate) fn extract(
         &mut self,
         left_image: ArrayView2<u8>,
         right_image: ArrayView2<u8>,

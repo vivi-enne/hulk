@@ -3,10 +3,7 @@ mod features;
 mod matcher_3d;
 mod pipeline;
 
-pub use feature_extractor::{XFeatError, XFeatModel};
-pub use features::XFeatOutput;
-pub use matcher_3d::{Matcher3D, Matcher3DError, MatcherOutput};
-pub use pipeline::{VisualOdometryError, VisualOdometryParameters, VisualOdometryPipeline};
+pub use pipeline::{Error, Parameters, Pipeline};
 
 #[cfg(test)]
 mod tests {
@@ -14,7 +11,7 @@ mod tests {
 
     use ndarray::Array2;
 
-    use crate::{VisualOdometryParameters, VisualOdometryPipeline};
+    use crate::{Parameters, Pipeline};
 
     #[test]
     fn infer_and_match() {
@@ -28,7 +25,7 @@ mod tests {
             vec![1.0, 0.0, 0.0, -1.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0],
         )
         .unwrap();
-        let mut pipeline = VisualOdometryPipeline::new(VisualOdometryParameters {
+        let mut pipeline = Pipeline::new(Parameters {
             xfeat_model_path: PathBuf::from("xfeat.onnx"),
             left_calibration,
             right_calibration,

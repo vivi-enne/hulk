@@ -15,5 +15,5 @@ egui_plot = { workspace = true }
 image = { workspace = true, features = ["png"] }
 linear_algebra = { workspace = true }
 ndarray = { workspace = true }
-visual_odometry_rust = { workspace = true }
+visual_odometry = { workspace = true }
 indicatif = { workspace = true }
