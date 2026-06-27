@@ -626,6 +626,28 @@ impl LocalizationMcapVisualizerApp {
                     &mut self.parameters.override_visual_odometry_covariance,
                     "override VO covariance",
                 );
+                ui.checkbox(
+                    &mut self.parameters.reject_visual_odometry_during_head_motion,
+                    "reject VO during head motion",
+                );
+                ui.horizontal(|ui| {
+                    ui.label("VO head rot rad");
+                    ui.add(
+                        DragValue::new(&mut self.parameters.max_visual_odometry_extrinsic_rotation)
+                            .speed(0.001)
+                            .range(0.0..=1.0),
+                    );
+                });
+                ui.horizontal(|ui| {
+                    ui.label("VO head trans m");
+                    ui.add(
+                        DragValue::new(
+                            &mut self.parameters.max_visual_odometry_extrinsic_translation,
+                        )
+                        .speed(0.001)
+                        .range(0.0..=0.2),
+                    );
+                });
                 ui.separator();
                 ui.checkbox(
                     &mut self.parameters.include_visual_odometry,
@@ -899,8 +921,11 @@ impl LocalizationMcapVisualizerApp {
 
         let stats = &result.stats;
         ui.label(format!(
-            "VO: {} received, {} ingested, {} stale camera skips",
-            stats.vo_received, stats.vo_ingested, stats.vo_skipped_stale_camera_matrix
+            "VO: {} received, {} ingested, {} head-motion skips, {} stale camera skips",
+            stats.vo_received,
+            stats.vo_ingested,
+            stats.vo_skipped_head_motion,
+            stats.vo_skipped_stale_camera_matrix
         ));
         ui.label(format!(
             "Global: {} frames, {} candidates, {} ingested, {} associations",
@@ -918,8 +943,10 @@ impl LocalizationMcapVisualizerApp {
             ui.label(format!("graph time: {:.2}s", sample.graph_seconds));
             ui.label(format!("replay time: {:.2}s", sample.replay_seconds));
             ui.label(format!(
-                "cumulative VO/global: {} / {}",
-                sample.stats.vo_ingested, sample.stats.global_associations_ingested
+                "cumulative VO/head skips/global: {} / {} / {}",
+                sample.stats.vo_ingested,
+                sample.stats.vo_skipped_head_motion,
+                sample.stats.global_associations_ingested
             ));
             if let Some(diagnostics) = &sample.diagnostics {
                 ui.label(format!("optimizer: {:?}", diagnostics.optimizer_status));

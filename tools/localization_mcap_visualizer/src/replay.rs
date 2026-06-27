@@ -16,8 +16,8 @@ use field_mark_association::{
 };
 use linear_algebra::IntoTransform;
 use localization_3d::{
-    Localization3dParameters, backend_configuration_from_parameters, ingest_foot_heights,
-    ingest_visual_odometry,
+    Localization3dParameters, VisualOdometryExtrinsicGate, backend_configuration_from_parameters,
+    ingest_foot_heights, ingest_visual_odometry, should_reject_visual_odometry_due_to_head_motion,
 };
 use localization_factrs::{
     BackendConfiguration, VinsBackend, VinsFrontend, VisualReprojectionAssociation,
@@ -54,6 +54,9 @@ pub struct ReplayParameters {
     pub max_visual_odometry_translation: Option<f32>,
     pub max_visual_odometry_rotation: Option<f32>,
     pub include_visual_odometry: bool,
+    pub reject_visual_odometry_during_head_motion: bool,
+    pub max_visual_odometry_extrinsic_rotation: f32,
+    pub max_visual_odometry_extrinsic_translation: f32,
     pub include_global_features: bool,
     pub include_imu: bool,
     pub include_foot_heights: bool,
@@ -104,6 +107,12 @@ impl Default for ReplayParameters {
             max_visual_odometry_translation: None,
             max_visual_odometry_rotation: None,
             include_visual_odometry: true,
+            reject_visual_odometry_during_head_motion: localization_parameters
+                .reject_visual_odometry_during_head_motion,
+            max_visual_odometry_extrinsic_rotation: localization_parameters
+                .max_visual_odometry_extrinsic_rotation,
+            max_visual_odometry_extrinsic_translation: localization_parameters
+                .max_visual_odometry_extrinsic_translation,
             include_global_features: true,
             include_imu: true,
             include_foot_heights: true,
@@ -186,6 +195,7 @@ pub struct ReplayStats {
     pub vo_dropped_gated: usize,
     pub vo_skipped_missing_camera_matrix: usize,
     pub vo_skipped_stale_camera_matrix: usize,
+    pub vo_skipped_head_motion: usize,
     pub global_frames: usize,
     pub global_candidates: usize,
     pub global_none: usize,
@@ -310,9 +320,7 @@ fn run_resolve(
                     recording,
                     &event,
                     &visual_odometry.delta,
-                    parameters.timestamp_mode,
-                    parameters.max_visual_odometry_translation,
-                    parameters.max_visual_odometry_rotation,
+                    &parameters,
                     &mut vo_timestamps,
                     &camera_matrices,
                     &mut frontend,
@@ -344,9 +352,7 @@ fn run_resolve(
                         recording,
                         event,
                         delta,
-                        parameters.timestamp_mode,
-                        parameters.max_visual_odometry_translation,
-                        parameters.max_visual_odometry_rotation,
+                        &parameters,
                         &mut vo_timestamps,
                         &camera_matrices,
                         &mut frontend,
@@ -448,6 +454,11 @@ fn backend_config(parameters: &ReplayParameters) -> BackendConfiguration {
         visual_feature_noise_variance: parameters.visual_feature_noise_variance,
         pose_hint_visual_feature_noise_variance: parameters.pose_hint_visual_feature_noise_variance,
         pose_hint_visual_huber_threshold: parameters.pose_hint_visual_huber_threshold,
+        reject_visual_odometry_during_head_motion: parameters
+            .reject_visual_odometry_during_head_motion,
+        max_visual_odometry_extrinsic_rotation: parameters.max_visual_odometry_extrinsic_rotation,
+        max_visual_odometry_extrinsic_translation: parameters
+            .max_visual_odometry_extrinsic_translation,
     };
     let mut config = backend_configuration_from_parameters(&localization_parameters);
     config.optimizer_max_iterations = parameters.optimizer_iterations.max(1);
@@ -465,9 +476,7 @@ fn ingest_vo_event(
     recording: &Recording,
     event: &RecordedEvent,
     delta: &VisualOdometryDelta,
-    timestamp_mode: TimestampMode,
-    max_visual_odometry_translation: Option<f32>,
-    max_visual_odometry_rotation: Option<f32>,
+    parameters: &ReplayParameters,
     vo_timestamps: &mut VisualOdometryTimestampTracker,
     camera_matrices: &OnlineCameraMatrices,
     frontend: &mut VinsFrontend,
@@ -475,6 +484,7 @@ fn ingest_vo_event(
     has_pending_measurements: &mut bool,
 ) -> Result<()> {
     stats.vo_received += 1;
+    let timestamp_mode = parameters.timestamp_mode;
     let Some((previous_time, current_time)) =
         vo_timestamps.measurement_times(event, delta, timestamp_mode, recording)
     else {
@@ -501,13 +511,21 @@ fn ingest_vo_event(
         stats.vo_skipped_stale_camera_matrix += 1;
         return Ok(());
     }
+    if should_reject_visual_odometry_due_to_head_motion(
+        visual_odometry_extrinsic_gate(parameters),
+        &previous_camera_matrix.matrix.matrix.inner,
+        &current_camera_matrix.matrix.matrix.inner,
+    ) {
+        stats.vo_skipped_head_motion += 1;
+        return Ok(());
+    }
 
     if visual_odometry_is_gated(
         delta,
         &previous_camera_matrix.matrix.matrix.inner,
         &current_camera_matrix.matrix.matrix.inner,
-        max_visual_odometry_translation,
-        max_visual_odometry_rotation,
+        parameters.max_visual_odometry_translation,
+        parameters.max_visual_odometry_rotation,
     ) {
         stats.vo_dropped_gated += 1;
         return Ok(());
@@ -547,6 +565,14 @@ fn visual_odometry_is_gated(
     max_translation
         .is_some_and(|max| current_robot_to_previous_robot.translation.vector.norm() > max)
         || max_rotation.is_some_and(|max| current_robot_to_previous_robot.rotation.angle() > max)
+}
+
+fn visual_odometry_extrinsic_gate(parameters: &ReplayParameters) -> VisualOdometryExtrinsicGate {
+    VisualOdometryExtrinsicGate {
+        reject_during_head_motion: parameters.reject_visual_odometry_during_head_motion,
+        max_rotation: parameters.max_visual_odometry_extrinsic_rotation,
+        max_translation: parameters.max_visual_odometry_extrinsic_translation,
+    }
 }
 
 fn ingest_recorded_field_mark_associations(
