@@ -372,6 +372,7 @@ fn run_resolve(
                     if parameters.include_global_features && recompute_global_features =>
                 {
                     ingest_recomputed_global_features(
+                        recording,
                         event,
                         frame,
                         &camera_matrices,
@@ -616,6 +617,7 @@ fn localization_visual_associations(
 
 #[allow(clippy::too_many_arguments)]
 fn ingest_recomputed_global_features(
+    recording: &Recording,
     event: &RecordedEvent,
     frame: &crate::mcap_recording::DetectedObjectsFrame,
     camera_matrices: &OnlineCameraMatrices,
@@ -632,18 +634,15 @@ fn ingest_recomputed_global_features(
         return Ok(());
     }
     stats.global_candidates += 1;
-    let visual_time = match parameters.timestamp_mode {
-        TimestampMode::McapPublish => event.publish_time,
-        TimestampMode::Embedded => frame.display_time(),
-    };
-
+    let measurement_time =
+        detected_objects_measurement_time(recording, event, frame, parameters.timestamp_mode);
     let Some(camera_matrix) = camera_matrices
-        .nearest(visual_time, parameters.timestamp_mode)
+        .nearest(measurement_time, parameters.timestamp_mode)
         .map(|nearest| nearest.matrix)
     else {
         return Ok(());
     };
-    if camera_matrix.distance_to(visual_time, parameters.timestamp_mode)
+    if camera_matrix.distance_to(measurement_time, parameters.timestamp_mode)
         > CAMERA_MATRIX_MAX_TIME_DISTANCE
     {
         return Ok(());
@@ -653,7 +652,7 @@ fn ingest_recomputed_global_features(
         .peek_last_optimization_result()
         .filter(|result| {
             Duration::from_nanos(
-                nanos_abs_diff(result.time, visual_time).min(u64::MAX as u128) as u64,
+                nanos_abs_diff(result.time, measurement_time).min(u64::MAX as u128) as u64,
             ) <= parameters.pose_hint.max_pose_age
         })
         .map(|result| {
@@ -708,7 +707,7 @@ fn ingest_recomputed_global_features(
                     },
                 });
         frontend.ingest_visual_reprojection_associations(
-            visual_time,
+            measurement_time,
             associations,
             robot_to_camera(&camera_matrix.matrix.inner),
         )?;
@@ -737,6 +736,20 @@ fn record_ingested_association_stats(
     if pose_hint_count > 0 {
         stats.pose_hint_frames_ingested += 1;
         stats.pose_hint_associations_ingested += pose_hint_count;
+    }
+}
+
+fn detected_objects_measurement_time(
+    recording: &Recording,
+    event: &RecordedEvent,
+    frame: &crate::mcap_recording::DetectedObjectsFrame,
+    timestamp_mode: TimestampMode,
+) -> SystemTime {
+    match timestamp_mode {
+        TimestampMode::McapPublish => recording
+            .detected_objects_image_publish_time(event)
+            .unwrap_or(event.publish_time),
+        TimestampMode::Embedded => frame.display_time(),
     }
 }
 

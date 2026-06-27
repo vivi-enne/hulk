@@ -57,6 +57,7 @@ pub struct Recording {
     images: Vec<StereoImageIndex>,
     images_by_embedded_time: Vec<usize>,
     detected_objects_by_image: Vec<Option<usize>>,
+    detected_objects_image_times: BTreeMap<i64, DetectedObjectsImageTime>,
     snapshot_index: SnapshotIndex,
     pub first_camera_matrix: CameraMatrix,
     pub stereo_camera_info: Option<StereoCameraInfo>,
@@ -200,12 +201,18 @@ impl Recording {
             .sort_by_key(|&index| (images[index].embedded_time.as_nanos(), images[index].order));
         let detected_objects_by_image =
             index_detected_objects_by_image(&events, &images, &images_by_embedded_time);
+        let detected_objects_image_times = index_detected_objects_image_times(
+            &images,
+            &images_by_embedded_time,
+            &detected_object_announcements,
+        );
 
         Ok(Self {
             events,
             images,
             images_by_embedded_time,
             detected_objects_by_image,
+            detected_objects_image_times,
             snapshot_index,
             first_camera_matrix: first_camera_matrix
                 .ok_or_else(|| color_eyre::eyre::eyre!("recording has no camera_matrix topic"))?,
@@ -361,6 +368,15 @@ impl Recording {
             ) <= SNAPSHOT_MAX_TIME_DISTANCE
         })
         .map(|candidate| candidate.publish_time)
+    }
+
+    pub fn detected_objects_image_publish_time(&self, event: &RecordedEvent) -> Option<SystemTime> {
+        let EventKind::DetectedObjects(frame) = &event.kind else {
+            return None;
+        };
+        self.detected_objects_image_times
+            .get(&frame.sequence_number)
+            .map(|time| time.publish_time)
     }
 
     pub fn latest_snapshot(&self, display_time: SystemTime) -> RecordingSnapshot {
@@ -560,6 +576,30 @@ impl Recording {
             _ => None,
         }
     }
+}
+
+fn index_detected_objects_image_times(
+    images: &[StereoImageIndex],
+    images_by_embedded_time: &[usize],
+    announcements: &BTreeMap<i64, (Time, SystemTime)>,
+) -> BTreeMap<i64, DetectedObjectsImageTime> {
+    announcements
+        .iter()
+        .filter_map(|(&sequence, &(source_time, _announcement_log_time))| {
+            let image_index = first_image_index_at_or_after_embedded_time(
+                images,
+                images_by_embedded_time,
+                source_time,
+            )?;
+            let image = images.get(image_index)?;
+            Some((
+                sequence,
+                DetectedObjectsImageTime {
+                    publish_time: image.publish_time,
+                },
+            ))
+        })
+        .collect()
 }
 
 fn index_detected_objects_by_image(
@@ -860,6 +900,10 @@ impl StereoImageIndex {
     fn display_time(&self) -> SystemTime {
         self.embedded_time.to_wallclock()
     }
+}
+
+struct DetectedObjectsImageTime {
+    publish_time: SystemTime,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

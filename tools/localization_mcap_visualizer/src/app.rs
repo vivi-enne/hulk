@@ -67,6 +67,7 @@ pub struct LocalizationMcapVisualizerApp {
     camera_matrix_key: Option<CameraMatrixKey>,
     camera_version: SceneVersion,
     global_debug_cache: CachedGlobalDebug,
+    show_top_down_path: bool,
 }
 
 impl LocalizationMcapVisualizerApp {
@@ -107,6 +108,7 @@ impl LocalizationMcapVisualizerApp {
             camera_matrix_key: None,
             camera_version: SceneVersion::default(),
             global_debug_cache: CachedGlobalDebug::default(),
+            show_top_down_path: true,
         })
     }
 }
@@ -153,8 +155,12 @@ impl App for LocalizationMcapVisualizerApp {
             debug_pose,
             &snapshot.detected_objects,
         );
+        let scene_pose = global_debug
+            .as_deref()
+            .map(|debug| debug.robot_to_field.inner.cast().framed_transform())
+            .unwrap_or(current_pose);
         let camera_matrix_for_ui = camera_matrix.clone();
-        self.update_scene_data(camera_matrix.take(), current_pose, global_debug.clone());
+        self.update_scene_data(camera_matrix.take(), scene_pose, global_debug.clone());
 
         let position_before_ui = self.position_seconds;
         let selected_camera_before_ui = self.selected_camera;
@@ -1015,9 +1021,14 @@ impl LocalizationMcapVisualizerApp {
                     }
                 }
                 ui.separator();
-                self.global_debug_panel(ui, global_debug);
+                self.top_down_association_view(
+                    ui,
+                    global_debug,
+                    camera_matrix,
+                    detected_objects_time,
+                );
                 ui.separator();
-                self.top_down_association_view(ui, global_debug, camera_matrix);
+                self.global_debug_panel(ui, global_debug);
             });
     }
 
@@ -1179,17 +1190,25 @@ impl LocalizationMcapVisualizerApp {
     }
 
     fn top_down_association_view(
-        &self,
+        &mut self,
         ui: &mut Ui,
         global_debug: Option<&GlobalLocalizationDetailedDebug>,
         camera_matrix: Option<&CameraMatrix>,
+        detected_objects_time: Option<SystemTime>,
     ) {
-        ui.heading("Top-Down Associations");
-        let (Some(debug), Some(camera_matrix)) = (global_debug, camera_matrix) else {
-            ui.label(RichText::new("No associations for this frame.").color(Color32::GRAY));
-            return;
-        };
-
+        ui.horizontal(|ui| {
+            ui.heading("Top-Down Associations");
+            if ui
+                .button(if self.show_top_down_path {
+                    "Hide path"
+                } else {
+                    "Show path"
+                })
+                .clicked()
+            {
+                self.show_top_down_path = !self.show_top_down_path;
+            }
+        });
         let available_width = ui.available_width().max(240.0);
         let (rect, response) = ui.allocate_exact_size(vec2(available_width, 220.0), Sense::hover());
         let painter = ui.painter_at(rect);
@@ -1201,60 +1220,93 @@ impl LocalizationMcapVisualizerApp {
 
         let dimensions = self.field_dimensions();
         let field_rect = top_down_field_rect(rect, &dimensions);
-        painter.rect_stroke(
-            field_rect,
-            egui::CornerRadius::same(2),
-            Stroke::new(1.5, Color32::WHITE),
-            StrokeKind::Inside,
-        );
-        painter.line_segment(
-            [
-                pos2(field_rect.center().x, field_rect.top()),
-                pos2(field_rect.center().x, field_rect.bottom()),
-            ],
-            Stroke::new(1.0, Color32::GRAY),
-        );
+        draw_top_down_field_markings(&painter, field_rect, &dimensions);
 
-        let ground_to_field = debug.robot_to_field.inner * camera_matrix.ground_to_robot.inner;
-        for association in &debug.associations {
-            let ground = association.back_projected_ground;
-            let detected_field =
-                ground_to_field * nalgebra::Point3::new(ground.x(), ground.y(), 0.0);
-            let detected_position =
-                field_to_screen(field_rect, &dimensions, detected_field.x, detected_field.y);
-            let feature_position = field_to_screen(
-                field_rect,
-                &dimensions,
-                association.field_point.x(),
-                association.field_point.y(),
-            );
-            let color = feature_class_color(association.class);
-            painter.line_segment(
-                [detected_position, feature_position],
-                Stroke::new(1.5, color.gamma_multiply(0.75)),
-            );
-            painter.circle_filled(detected_position, 3.5, color);
-            painter.circle_stroke(feature_position, 5.0, Stroke::new(1.5, Color32::WHITE));
+        if self.show_top_down_path {
+            let trajectory_seconds = detected_objects_time
+                .map(|time| self.recording.seconds_since_start(time))
+                .unwrap_or(self.position_seconds);
+            self.draw_top_down_trajectory(&painter, field_rect, &dimensions, trajectory_seconds);
         }
 
-        let robot_translation = debug.robot_to_field.inner.translation.vector;
-        painter.circle_filled(
-            field_to_screen(
-                field_rect,
-                &dimensions,
-                robot_translation.x,
-                robot_translation.y,
-            ),
-            4.0,
-            Color32::from_rgb(82, 170, 255),
-        );
+        if let (Some(debug), Some(camera_matrix)) = (global_debug, camera_matrix) {
+            let ground_to_field = debug.robot_to_field.inner * camera_matrix.ground_to_robot.inner;
+            for association in &debug.associations {
+                let ground = association.back_projected_ground;
+                let detected_field =
+                    ground_to_field * nalgebra::Point3::new(ground.x(), ground.y(), 0.0);
+                let detected_position =
+                    field_to_screen(field_rect, &dimensions, detected_field.x, detected_field.y);
+                let feature_position = field_to_screen(
+                    field_rect,
+                    &dimensions,
+                    association.field_point.x(),
+                    association.field_point.y(),
+                );
+                let color = feature_class_color(association.class);
+                painter.line_segment(
+                    [detected_position, feature_position],
+                    Stroke::new(1.5, color.gamma_multiply(0.75)),
+                );
+                painter.circle_filled(detected_position, 3.5, color);
+                painter.circle_stroke(feature_position, 5.0, Stroke::new(1.5, Color32::WHITE));
+            }
+        }
 
-        response.on_hover_text(format!(
-            "{} associations, robot ({:.2}, {:.2})",
-            debug.associations.len(),
-            robot_translation.x,
-            robot_translation.y
-        ));
+        if let Some(debug) = global_debug {
+            let robot_translation = debug.robot_to_field.inner.translation.vector;
+            draw_top_down_robot_pose(&painter, field_rect, &dimensions, &debug.robot_to_field);
+            response.on_hover_text(format!(
+                "{} associations, robot ({:.2}, {:.2})",
+                debug.associations.len(),
+                robot_translation.x,
+                robot_translation.y
+            ));
+        } else {
+            response.on_hover_text("no global-localization pose for this frame");
+        }
+    }
+
+    fn draw_top_down_trajectory(
+        &self,
+        painter: &egui::Painter,
+        field_rect: Rect,
+        dimensions: &FieldDimensions,
+        seconds: f64,
+    ) {
+        if let Some(result) = self.resolved_result() {
+            for window in result
+                .samples
+                .iter()
+                .take_while(|sample| sample.replay_seconds <= seconds)
+                .collect::<Vec<_>>()
+                .windows(2)
+            {
+                draw_top_down_trajectory_segment(
+                    painter,
+                    field_rect,
+                    dimensions,
+                    &window[0].robot_to_field,
+                    &window[1].robot_to_field,
+                );
+            }
+        } else {
+            for window in self
+                .recorded_trajectory
+                .iter()
+                .take_while(|point| point.seconds <= seconds)
+                .collect::<Vec<_>>()
+                .windows(2)
+            {
+                draw_top_down_trajectory_segment(
+                    painter,
+                    field_rect,
+                    dimensions,
+                    &window[0].robot_to_field,
+                    &window[1].robot_to_field,
+                );
+            }
+        }
     }
 
     fn timeline_panel(&mut self, context: &Context) {
@@ -1732,6 +1784,130 @@ fn top_down_field_rect(rect: Rect, dimensions: &FieldDimensions) -> Rect {
     )
 }
 
+fn draw_top_down_field_markings(
+    painter: &egui::Painter,
+    field_rect: Rect,
+    dimensions: &FieldDimensions,
+) {
+    let white = Color32::from_rgb(235, 245, 238);
+    let muted = Color32::from_rgb(150, 168, 156);
+    let line = Stroke::new(1.5, white);
+    let thin_line = Stroke::new(1.0, muted);
+
+    painter.rect_stroke(
+        field_rect,
+        egui::CornerRadius::same(2),
+        line,
+        StrokeKind::Inside,
+    );
+    draw_top_down_field_segment(
+        painter,
+        field_rect,
+        dimensions,
+        0.0,
+        -dimensions.width / 2.0,
+        0.0,
+        dimensions.width / 2.0,
+        thin_line,
+    );
+
+    let center = field_to_screen(field_rect, dimensions, 0.0, 0.0);
+    let center_circle_radius =
+        dimensions.center_circle_diameter / 2.0 / dimensions.length.max(1.0) * field_rect.width();
+    painter.circle_stroke(center, center_circle_radius, thin_line);
+
+    for side in [-1.0, 1.0] {
+        draw_top_down_goal_area(
+            painter,
+            field_rect,
+            dimensions,
+            side,
+            dimensions.goal_box_area_length,
+            dimensions.goal_box_area_width,
+            thin_line,
+        );
+        draw_top_down_goal_area(
+            painter,
+            field_rect,
+            dimensions,
+            side,
+            dimensions.penalty_area_length,
+            dimensions.penalty_area_width,
+            thin_line,
+        );
+        let penalty_x = side * (dimensions.length / 2.0 - dimensions.penalty_marker_distance);
+        painter.circle_filled(
+            field_to_screen(field_rect, dimensions, penalty_x, 0.0),
+            2.0,
+            white,
+        );
+    }
+}
+
+fn draw_top_down_goal_area(
+    painter: &egui::Painter,
+    field_rect: Rect,
+    dimensions: &FieldDimensions,
+    side: f32,
+    length: f32,
+    width: f32,
+    stroke: Stroke,
+) {
+    let goal_line_x = side * dimensions.length / 2.0;
+    let inner_x = goal_line_x - side * length;
+    let half_width = width / 2.0;
+    draw_top_down_field_segment(
+        painter,
+        field_rect,
+        dimensions,
+        goal_line_x,
+        -half_width,
+        inner_x,
+        -half_width,
+        stroke,
+    );
+    draw_top_down_field_segment(
+        painter,
+        field_rect,
+        dimensions,
+        inner_x,
+        -half_width,
+        inner_x,
+        half_width,
+        stroke,
+    );
+    draw_top_down_field_segment(
+        painter,
+        field_rect,
+        dimensions,
+        inner_x,
+        half_width,
+        goal_line_x,
+        half_width,
+        stroke,
+    );
+}
+
+#[allow(clippy::too_many_arguments)]
+fn draw_top_down_field_segment(
+    painter: &egui::Painter,
+    field_rect: Rect,
+    dimensions: &FieldDimensions,
+    start_x: f32,
+    start_y: f32,
+    end_x: f32,
+    end_y: f32,
+    stroke: Stroke,
+) {
+    painter.line_segment(
+        [
+            field_to_screen(field_rect, dimensions, start_x, start_y),
+            field_to_screen(field_rect, dimensions, end_x, end_y),
+        ],
+        stroke,
+    );
+}
+
 fn field_to_screen(
     field_rect: Rect,
     dimensions: &FieldDimensions,
@@ -1741,6 +1917,77 @@ fn field_to_screen(
     let x = field_rect.center().x + field_x / dimensions.length.max(1.0) * field_rect.width();
     let y = field_rect.center().y - field_y / dimensions.width.max(1.0) * field_rect.height();
     pos2(x, y)
+}
+
+fn draw_top_down_trajectory_segment(
+    painter: &egui::Painter,
+    field_rect: Rect,
+    dimensions: &FieldDimensions,
+    start: &linear_algebra::Isometry3<Robot, Field, f64>,
+    end: &linear_algebra::Isometry3<Robot, Field, f64>,
+) {
+    let start = start.inner.translation.vector;
+    let end = end.inner.translation.vector;
+    if !start.x.is_finite() || !start.y.is_finite() || !end.x.is_finite() || !end.y.is_finite() {
+        return;
+    }
+    painter.line_segment(
+        [
+            field_to_screen(field_rect, dimensions, start.x as f32, start.y as f32),
+            field_to_screen(field_rect, dimensions, end.x as f32, end.y as f32),
+        ],
+        Stroke::new(1.5, Color32::from_rgb(82, 170, 255).gamma_multiply(0.55)),
+    );
+}
+
+fn draw_top_down_robot_pose(
+    painter: &egui::Painter,
+    field_rect: Rect,
+    dimensions: &FieldDimensions,
+    robot_to_field: &linear_algebra::Isometry3<Robot, Field>,
+) {
+    let robot_translation = robot_to_field.inner.translation.vector;
+    if !robot_translation.x.is_finite() || !robot_translation.y.is_finite() {
+        return;
+    }
+
+    let center = field_to_screen(
+        field_rect,
+        dimensions,
+        robot_translation.x,
+        robot_translation.y,
+    );
+    let forward_in_field = robot_to_field
+        .inner
+        .transform_point(&nalgebra::Point3::new(0.45, 0.0, 0.0));
+    let tip = field_to_screen(
+        field_rect,
+        dimensions,
+        forward_in_field.x,
+        forward_in_field.y,
+    );
+    let arrow = tip - center;
+
+    painter.circle_filled(center, 4.0, Color32::from_rgb(82, 170, 255));
+    if arrow.length_sq() <= 1.0 {
+        return;
+    }
+
+    let direction = arrow.normalized();
+    let perpendicular = vec2(-direction.y, direction.x);
+    painter.line_segment(
+        [center, tip],
+        Stroke::new(2.0, Color32::from_rgb(82, 170, 255)),
+    );
+    painter.add(egui::Shape::convex_polygon(
+        vec![
+            tip,
+            tip - direction * 8.0 + perpendicular * 4.0,
+            tip - direction * 8.0 - perpendicular * 4.0,
+        ],
+        Color32::from_rgb(82, 170, 255),
+        Stroke::NONE,
+    ));
 }
 
 fn object_label_color(label: RobocupObjectLabel) -> Color32 {
