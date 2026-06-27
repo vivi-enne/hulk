@@ -2,7 +2,7 @@ use std::{
     future::{Future, ready},
     pin::Pin,
     sync::Arc,
-    time::Duration,
+    time::{Duration, SystemTime},
 };
 
 use booster::ImuState;
@@ -49,6 +49,14 @@ pub struct Localization3dParameters {
     pub max_visual_odometry_extrinsic_rotation: f32,
     /// Maximum allowed robot-to-camera translation change for accepting VO, in meters.
     pub max_visual_odometry_extrinsic_translation: f32,
+    /// Reuse the last accepted pose when an unanchored solve makes a large jump.
+    pub require_recent_visual_anchor_for_large_pose_updates: bool,
+    /// Maximum age of the last visual association frame before pose updates are treated as unanchored.
+    pub max_visual_anchor_age: Duration,
+    /// Maximum accepted x/y update without a recent visual anchor, in meters.
+    pub max_unanchored_translation_update: f32,
+    /// Maximum accepted yaw update without a recent visual anchor, in radians.
+    pub max_unanchored_yaw_update: f32,
 }
 
 impl Default for Localization3dParameters {
@@ -61,6 +69,10 @@ impl Default for Localization3dParameters {
             reject_visual_odometry_during_head_motion: true,
             max_visual_odometry_extrinsic_rotation: 0.02,
             max_visual_odometry_extrinsic_translation: 0.005,
+            require_recent_visual_anchor_for_large_pose_updates: true,
+            max_visual_anchor_age: Duration::from_millis(300),
+            max_unanchored_translation_update: 0.08,
+            max_unanchored_yaw_update: 0.10,
         }
     }
 }
@@ -98,6 +110,17 @@ impl Localization3dParameters {
                 "max_visual_odometry_extrinsic_translation must be finite and >= 0".to_string(),
             );
         }
+        if self.max_visual_anchor_age.is_zero() {
+            return Err("max_visual_anchor_age must be > 0".to_string());
+        }
+        if !self.max_unanchored_translation_update.is_finite()
+            || self.max_unanchored_translation_update < 0.0
+        {
+            return Err("max_unanchored_translation_update must be finite and >= 0".to_string());
+        }
+        if !self.max_unanchored_yaw_update.is_finite() || self.max_unanchored_yaw_update < 0.0 {
+            return Err("max_unanchored_yaw_update must be finite and >= 0".to_string());
+        }
         Ok(())
     }
 
@@ -108,6 +131,15 @@ impl Localization3dParameters {
             max_translation: self.max_visual_odometry_extrinsic_translation,
         }
     }
+
+    fn visual_anchor_pose_gate(&self) -> VisualAnchorPoseGate {
+        VisualAnchorPoseGate {
+            require_recent_visual_anchor: self.require_recent_visual_anchor_for_large_pose_updates,
+            max_anchor_age: self.max_visual_anchor_age,
+            max_unanchored_translation_update: self.max_unanchored_translation_update as f64,
+            max_unanchored_yaw_update: self.max_unanchored_yaw_update as f64,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -115,6 +147,14 @@ pub struct VisualOdometryExtrinsicGate {
     pub reject_during_head_motion: bool,
     pub max_rotation: f32,
     pub max_translation: f32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct VisualAnchorPoseGate {
+    pub require_recent_visual_anchor: bool,
+    pub max_anchor_age: Duration,
+    pub max_unanchored_translation_update: f64,
+    pub max_unanchored_yaw_update: f64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Message)]
@@ -340,11 +380,16 @@ pub async fn run(ctx: Arc<Context>) -> Result<()> {
         }
     }));
     let mut live_localization = LiveVisualOdometryLocalization::default();
+    let mut last_visual_anchor_time = None;
+    let mut last_published_robot_to_field = None;
 
     loop {
         select! {
             field_mark_associations = field_mark_associations_subscriber.recv() => {
                 let field_mark_associations = field_mark_associations?;
+                if !field_mark_associations.inner.associations.is_empty() {
+                    last_visual_anchor_time = Some(field_mark_associations.time.to_wallclock());
+                }
                 ingest_field_mark_associations(&mut frontend, field_mark_associations)
                     .wrap_err("failed to ingest globally associated field marks")?;
             }
@@ -386,6 +431,23 @@ pub async fn run(ctx: Arc<Context>) -> Result<()> {
                     &visual_odometer,
                     &camera_matrix_cache,
                 ) {
+                    let parameters = parameters.snapshot().typed().clone();
+                    let candidate_robot_to_field = robot_to_field_from_localization(transform);
+                    let transform = if should_reject_unanchored_pose_update(
+                        parameters.visual_anchor_pose_gate(),
+                        last_published_robot_to_field.as_ref(),
+                        &candidate_robot_to_field,
+                        last_visual_anchor_time,
+                        visual_odometer.time.to_wallclock(),
+                    ) {
+                        last_published_robot_to_field
+                            .as_ref()
+                            .map(localization_transform_from_backend_pose)
+                            .unwrap_or(transform)
+                    } else {
+                        last_published_robot_to_field = Some(candidate_robot_to_field);
+                        transform
+                    };
                     let localization = Some(transform);
                     localization_publisher.publish(&localization).await?;
                     timestamped_localization_publisher
@@ -422,9 +484,23 @@ pub async fn run(ctx: Arc<Context>) -> Result<()> {
                         backend_localization
                     }
                 });
-                let transform = result.as_ref().map(|result| {
+
+                let transform = result.as_ref().and_then(|result| {
+                    let parameters = parameters.snapshot().typed().clone();
+                    if should_reject_unanchored_pose_update(
+                        parameters.visual_anchor_pose_gate(),
+                        last_published_robot_to_field.as_ref(),
+                        &result.transform,
+                        last_visual_anchor_time,
+                        result.time,
+                    ) {
+                        return last_published_robot_to_field
+                            .as_ref()
+                            .map(localization_transform_from_backend_pose);
+                    }
+
                     live_localization.reset(result, &visual_odometer_cache, &camera_matrix_cache);
-                    live_localization
+                    let transform = live_localization
                         .field_to_robot_latest(&visual_odometer_cache, &camera_matrix_cache)
                         .unwrap_or_else(|| {
                             let backend_localization =
@@ -440,7 +516,9 @@ pub async fn run(ctx: Arc<Context>) -> Result<()> {
                             } else {
                                 backend_localization
                             }
-                        })
+                        });
+                    last_published_robot_to_field = Some(robot_to_field_from_localization(transform));
+                    Some(transform)
                 });
 
                 localization_publisher.publish(&transform).await?;
@@ -793,6 +871,53 @@ pub fn should_reject_visual_odometry_due_to_head_motion(
         || previous_camera_to_current_camera.translation.vector.norm() > gate.max_translation
 }
 
+pub fn should_reject_unanchored_pose_update(
+    gate: VisualAnchorPoseGate,
+    previous_robot_to_field: Option<&nalgebra::Isometry3<f64>>,
+    candidate_robot_to_field: &nalgebra::Isometry3<f64>,
+    last_visual_anchor_time: Option<SystemTime>,
+    result_time: SystemTime,
+) -> bool {
+    if !gate.require_recent_visual_anchor {
+        return false;
+    }
+
+    let recently_anchored = last_visual_anchor_time.is_some_and(|anchor_time| {
+        result_time
+            .duration_since(anchor_time)
+            .is_ok_and(|age| age <= gate.max_anchor_age)
+    });
+    if recently_anchored {
+        return false;
+    }
+
+    let Some(previous_robot_to_field) = previous_robot_to_field else {
+        return false;
+    };
+
+    let previous_translation = previous_robot_to_field.translation.vector.xy();
+    let candidate_translation = candidate_robot_to_field.translation.vector.xy();
+    let translation_update = (candidate_translation - previous_translation).norm();
+
+    let (_, _, previous_yaw) = previous_robot_to_field.rotation.euler_angles();
+    let (_, _, candidate_yaw) = candidate_robot_to_field.rotation.euler_angles();
+    let yaw_update = shortest_angle_distance(previous_yaw, candidate_yaw).abs();
+
+    translation_update > gate.max_unanchored_translation_update
+        || yaw_update > gate.max_unanchored_yaw_update
+}
+
+fn shortest_angle_distance(from: f64, to: f64) -> f64 {
+    let mut delta = to - from;
+    while delta > std::f64::consts::PI {
+        delta -= 2.0 * std::f64::consts::PI;
+    }
+    while delta < -std::f64::consts::PI {
+        delta += 2.0 * std::f64::consts::PI;
+    }
+    delta
+}
+
 /// Ingests left and right foot-height observations into the VINS frontend.
 ///
 /// The sole positions are read from `robot_kinematics` in the robot frame and timestamped with the
@@ -829,6 +954,12 @@ fn foot_height_points(robot_kinematics: &RobotKinematics) -> (Point3<f64>, Point
 
 fn robot_to_camera(camera_matrix: &CameraMatrix) -> Isometry3<Robot, Camera> {
     camera_matrix.head_to_camera * camera_matrix.robot_to_head
+}
+
+fn robot_to_field_from_localization(
+    localization: Isometry3<Field, Robot>,
+) -> nalgebra::Isometry3<f64> {
+    localization.inverse().inner.cast()
 }
 
 #[cfg(test)]

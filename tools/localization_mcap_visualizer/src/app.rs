@@ -68,6 +68,8 @@ pub struct LocalizationMcapVisualizerApp {
     camera_version: SceneVersion,
     global_debug_cache: CachedGlobalDebug,
     show_top_down_path: bool,
+    show_vo_only: bool,
+    last_sent_show_vo_only: bool,
 }
 
 impl LocalizationMcapVisualizerApp {
@@ -109,6 +111,8 @@ impl LocalizationMcapVisualizerApp {
             camera_version: SceneVersion::default(),
             global_debug_cache: CachedGlobalDebug::default(),
             show_top_down_path: true,
+            show_vo_only: false,
+            last_sent_show_vo_only: false,
         })
     }
 }
@@ -270,24 +274,32 @@ impl LocalizationMcapVisualizerApp {
         } else {
             None
         };
-        let next_recorded_trajectory = if recorded_trajectory_version != SceneVersion::READY {
-            Some(self.recorded_trajectory.clone())
-        } else {
-            None
-        };
-        let next_resolved_trajectory = if resolved_trajectory_version != self.resolve_version {
-            Some(match self.resolved_result() {
-                Some(result) => result.trajectory(),
-                None => Vec::new(),
-            })
-        } else {
-            None
-        };
         let next_field_dimensions = if field_dimensions_version != SceneVersion::READY {
             Some(self.field_dimensions())
         } else {
             None
         };
+        let trajectory_mode_changed = self.last_sent_show_vo_only != self.show_vo_only;
+        let next_recorded_trajectory =
+            if recorded_trajectory_version != SceneVersion::READY || trajectory_mode_changed {
+                Some(if self.show_vo_only {
+                    Vec::new()
+                } else {
+                    self.recorded_trajectory.clone()
+                })
+            } else {
+                None
+            };
+        let next_resolved_trajectory =
+            if resolved_trajectory_version != self.resolve_version || trajectory_mode_changed {
+                Some(match self.resolved_result() {
+                    Some(result) if self.show_vo_only => result.vo_trajectory.clone(),
+                    Some(result) => result.trajectory(),
+                    None => Vec::new(),
+                })
+            } else {
+                None
+            };
 
         let mut scene_data = self.widget.bevy_app.world_mut().resource_mut::<SceneData>();
         if let Some(field_dimensions) = next_field_dimensions {
@@ -310,6 +322,7 @@ impl LocalizationMcapVisualizerApp {
         if global_debug_version != self.global_debug_cache.version {
             scene_data.set_global_debug(global_debug);
         }
+        self.last_sent_show_vo_only = self.show_vo_only;
     }
 
     fn selected_scene_frame_sequence(&self) -> Option<SceneFrameSequence> {
@@ -406,9 +419,7 @@ impl LocalizationMcapVisualizerApp {
         recorded_localization: Option<linear_algebra::Isometry3<Field, Robot>>,
     ) -> linear_algebra::Isometry3<Robot, Field, f64> {
         let pose = self
-            .resolved_result()
-            .and_then(|result| nearest_sample(&result.samples, self.position_seconds))
-            .map(|sample| sample.robot_to_field)
+            .active_resolved_pose(self.position_seconds)
             .or_else(|| {
                 recorded_localization
                     .map(|field_to_robot| field_to_robot.inverse().inner.cast().framed_transform())
@@ -431,18 +442,36 @@ impl LocalizationMcapVisualizerApp {
             Some(display_time) => self.recording.seconds_since_start(display_time),
             None => self.position_seconds,
         };
-        let pose = self
-            .resolved_result()
-            .and_then(|result| nearest_sample(&result.samples, seconds))
-            .map(|sample| sample.robot_to_field)
-            .or_else(|| {
-                nearest_trajectory_point(&self.recorded_trajectory, seconds)
-                    .map(|point| point.robot_to_field)
-            });
+        let pose = self.active_resolved_pose(seconds).or_else(|| {
+            nearest_trajectory_point(&self.recorded_trajectory, seconds)
+                .map(|point| point.robot_to_field)
+        });
         match pose {
             Some(pose) => pose,
             None => self.initial_robot_to_field(),
         }
+    }
+
+    fn active_resolved_pose(
+        &self,
+        seconds: f64,
+    ) -> Option<linear_algebra::Isometry3<Robot, Field, f64>> {
+        let result = self.resolved_result()?;
+        if self.show_vo_only {
+            nearest_trajectory_point(&result.vo_trajectory, seconds)
+                .map(|point| point.robot_to_field)
+        } else {
+            nearest_sample(&result.samples, seconds).map(|sample| sample.robot_to_field)
+        }
+    }
+
+    fn active_resolved_trajectory(&self) -> Option<Vec<TrajectoryPoint>> {
+        let result = self.resolved_result()?;
+        Some(if self.show_vo_only {
+            result.vo_trajectory.clone()
+        } else {
+            result.trajectory()
+        })
     }
 
     fn initial_robot_to_field(&self) -> linear_algebra::Isometry3<Robot, Field, f64> {
@@ -589,6 +618,27 @@ impl LocalizationMcapVisualizerApp {
                     &mut self.parameters.max_window_seconds,
                     0.2..=10.0,
                 );
+                let recording_duration = self.recording.duration().as_secs_f64();
+                numeric_row(
+                    ui,
+                    "solve start s",
+                    &mut self.parameters.solve_start_seconds,
+                    0.0..=recording_duration,
+                );
+                numeric_row(
+                    ui,
+                    "solve end s",
+                    &mut self.parameters.solve_end_seconds,
+                    0.0..=recording_duration,
+                );
+                if !self.parameters.solve_end_seconds.is_finite()
+                    || self.parameters.solve_end_seconds == 0.0
+                {
+                    self.parameters.solve_end_seconds = recording_duration;
+                }
+                if self.parameters.solve_start_seconds > self.parameters.solve_end_seconds {
+                    self.parameters.solve_end_seconds = self.parameters.solve_start_seconds;
+                }
                 numeric_row(
                     ui,
                     "visual feature variance",
@@ -646,6 +696,44 @@ impl LocalizationMcapVisualizerApp {
                         )
                         .speed(0.001)
                         .range(0.0..=0.2),
+                    );
+                });
+                ui.checkbox(
+                    &mut self
+                        .parameters
+                        .require_recent_visual_anchor_for_large_pose_updates,
+                    "reuse pose for unanchored jumps",
+                );
+                ui.horizontal(|ui| {
+                    ui.label("visual anchor age ms");
+                    let mut max_visual_anchor_age_ms =
+                        self.parameters.max_visual_anchor_age.as_secs_f64() * 1000.0;
+                    if ui
+                        .add(
+                            DragValue::new(&mut max_visual_anchor_age_ms)
+                                .speed(10.0)
+                                .range(10.0..=5000.0),
+                        )
+                        .changed()
+                    {
+                        self.parameters.max_visual_anchor_age =
+                            Duration::from_secs_f64(max_visual_anchor_age_ms / 1000.0);
+                    }
+                });
+                ui.horizontal(|ui| {
+                    ui.label("unanchored xy m");
+                    ui.add(
+                        DragValue::new(&mut self.parameters.max_unanchored_translation_update)
+                            .speed(0.01)
+                            .range(0.0..=2.0),
+                    );
+                });
+                ui.horizontal(|ui| {
+                    ui.label("unanchored yaw rad");
+                    ui.add(
+                        DragValue::new(&mut self.parameters.max_unanchored_yaw_update)
+                            .speed(0.01)
+                            .range(0.0..=3.2),
                     );
                 });
                 ui.separator();
@@ -888,6 +976,17 @@ impl LocalizationMcapVisualizerApp {
                         },
                     };
                 }
+                if self.resolved_result().is_some() {
+                    let label = if self.show_vo_only {
+                        "Show solver"
+                    } else {
+                        "Show VO only"
+                    };
+                    if ui.button(label).clicked() {
+                        self.show_vo_only = !self.show_vo_only;
+                        self.resolve_version = self.resolve_version.next();
+                    }
+                }
                 if let ResolveState::Failed(error) = &self.resolve {
                     ui.colored_label(Color32::LIGHT_RED, error);
                 }
@@ -920,12 +1019,21 @@ impl LocalizationMcapVisualizerApp {
         };
 
         let stats = &result.stats;
+        ui.label(if self.show_vo_only {
+            RichText::new("displaying VO-only trajectory").color(Color32::LIGHT_GREEN)
+        } else {
+            RichText::new("displaying solver trajectory").color(Color32::GRAY)
+        });
         ui.label(format!(
             "VO: {} received, {} ingested, {} head-motion skips, {} stale camera skips",
             stats.vo_received,
             stats.vo_ingested,
             stats.vo_skipped_head_motion,
             stats.vo_skipped_stale_camera_matrix
+        ));
+        ui.label(format!(
+            "Pose: {} unanchored jumps reused previous pose",
+            stats.pose_updates_reused_unanchored
         ));
         ui.label(format!(
             "Global: {} frames, {} candidates, {} ingested, {} associations",
@@ -943,9 +1051,10 @@ impl LocalizationMcapVisualizerApp {
             ui.label(format!("graph time: {:.2}s", sample.graph_seconds));
             ui.label(format!("replay time: {:.2}s", sample.replay_seconds));
             ui.label(format!(
-                "cumulative VO/head skips/global: {} / {} / {}",
+                "cumulative VO/head skips/reused/global: {} / {} / {} / {}",
                 sample.stats.vo_ingested,
                 sample.stats.vo_skipped_head_motion,
+                sample.stats.pose_updates_reused_unanchored,
                 sample.stats.global_associations_ingested
             ));
             if let Some(diagnostics) = &sample.diagnostics {
@@ -1301,11 +1410,10 @@ impl LocalizationMcapVisualizerApp {
         dimensions: &FieldDimensions,
         seconds: f64,
     ) {
-        if let Some(result) = self.resolved_result() {
-            for window in result
-                .samples
+        if let Some(trajectory) = self.active_resolved_trajectory() {
+            for window in trajectory
                 .iter()
-                .take_while(|sample| sample.replay_seconds <= seconds)
+                .take_while(|point| point.seconds <= seconds)
                 .collect::<Vec<_>>()
                 .windows(2)
             {

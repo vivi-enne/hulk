@@ -955,7 +955,7 @@ pub struct CameraImage {
     pub rgba: Vec<u8>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct TrajectoryPoint {
     pub seconds: f64,
     pub robot_to_field: Isometry3<Robot, Field, f64>,

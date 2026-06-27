@@ -16,8 +16,9 @@ use field_mark_association::{
 };
 use linear_algebra::IntoTransform;
 use localization_3d::{
-    Localization3dParameters, VisualOdometryExtrinsicGate, backend_configuration_from_parameters,
-    ingest_foot_heights, ingest_visual_odometry, should_reject_visual_odometry_due_to_head_motion,
+    Localization3dParameters, VisualAnchorPoseGate, VisualOdometryExtrinsicGate,
+    backend_configuration_from_parameters, ingest_foot_heights, ingest_visual_odometry,
+    should_reject_unanchored_pose_update, should_reject_visual_odometry_due_to_head_motion,
 };
 use localization_factrs::{
     BackendConfiguration, VinsBackend, VinsFrontend, VisualReprojectionAssociation,
@@ -45,6 +46,8 @@ pub struct ReplayParameters {
     pub solve_cadence_ms: f64,
     pub optimizer_iterations: usize,
     pub max_window_seconds: f64,
+    pub solve_start_seconds: f64,
+    pub solve_end_seconds: f64,
     pub visual_feature_noise_variance: f64,
     pub pose_hint_visual_feature_noise_variance: f64,
     pub pose_hint_visual_huber_threshold: f64,
@@ -57,6 +60,10 @@ pub struct ReplayParameters {
     pub reject_visual_odometry_during_head_motion: bool,
     pub max_visual_odometry_extrinsic_rotation: f32,
     pub max_visual_odometry_extrinsic_translation: f32,
+    pub require_recent_visual_anchor_for_large_pose_updates: bool,
+    pub max_visual_anchor_age: Duration,
+    pub max_unanchored_translation_update: f32,
+    pub max_unanchored_yaw_update: f32,
     pub include_global_features: bool,
     pub include_imu: bool,
     pub include_foot_heights: bool,
@@ -94,7 +101,9 @@ impl Default for ReplayParameters {
             timestamp_mode: TimestampMode::Embedded,
             solve_cadence_ms: 30.0,
             optimizer_iterations: 5,
-            max_window_seconds: 2.0,
+            max_window_seconds: 3.0,
+            solve_start_seconds: 0.0,
+            solve_end_seconds: f64::INFINITY,
             visual_feature_noise_variance: localization_parameters.visual_feature_noise_variance,
             pose_hint_visual_feature_noise_variance: localization_parameters
                 .pose_hint_visual_feature_noise_variance,
@@ -113,6 +122,12 @@ impl Default for ReplayParameters {
                 .max_visual_odometry_extrinsic_rotation,
             max_visual_odometry_extrinsic_translation: localization_parameters
                 .max_visual_odometry_extrinsic_translation,
+            require_recent_visual_anchor_for_large_pose_updates: localization_parameters
+                .require_recent_visual_anchor_for_large_pose_updates,
+            max_visual_anchor_age: localization_parameters.max_visual_anchor_age,
+            max_unanchored_translation_update: localization_parameters
+                .max_unanchored_translation_update,
+            max_unanchored_yaw_update: localization_parameters.max_unanchored_yaw_update,
             include_global_features: true,
             include_imu: true,
             include_foot_heights: true,
@@ -148,6 +163,7 @@ pub struct ResolveProgress {
 pub struct ResolveResult {
     pub parameters: ReplayParameters,
     pub samples: Vec<SolveSample>,
+    pub vo_trajectory: Vec<TrajectoryPoint>,
     pub stats: ReplayStats,
     pub elapsed: Duration,
 }
@@ -196,6 +212,7 @@ pub struct ReplayStats {
     pub vo_skipped_missing_camera_matrix: usize,
     pub vo_skipped_stale_camera_matrix: usize,
     pub vo_skipped_head_motion: usize,
+    pub pose_updates_reused_unanchored: usize,
     pub global_frames: usize,
     pub global_candidates: usize,
     pub global_none: usize,
@@ -272,9 +289,23 @@ fn run_resolve(
     let mut association_state = FieldMarkAssociationState::default();
     let mut stats = ReplayStats::default();
     let mut samples = Vec::new();
+    let mut vo_only = VisualOdometryTrajectory::new(
+        localization_3d::initial_robot_to_field_from_camera_matrix(&recording.first_camera_matrix)
+            .inner,
+    );
     let mut has_pending_measurements = false;
+    let mut last_visual_anchor_time = None;
+    let mut last_accepted_robot_to_field = None;
     let cadence = Duration::from_secs_f64((parameters.solve_cadence_ms / 1000.0).max(0.001));
-    let mut next_solve_time = recording.start_log_time() + cadence;
+    let range_start_seconds = parameters.solve_start_seconds.max(0.0);
+    let range_end_seconds = parameters
+        .solve_end_seconds
+        .min(recording.duration().as_secs_f64())
+        .max(range_start_seconds);
+    let range_start_time =
+        recording.start_log_time() + Duration::from_secs_f64(range_start_seconds);
+    let range_end_time = recording.start_log_time() + Duration::from_secs_f64(range_end_seconds);
+    let mut next_solve_time = range_start_time + cadence;
     let replay_events = merged_replay_events(recording, visual_odometry_override);
     let total_events = replay_events.len();
     let has_recorded_global_features = recording
@@ -289,6 +320,42 @@ fn run_resolve(
             return Ok(None);
         }
         let replay_time = replay_event.log_time();
+        if replay_time > range_end_time {
+            break;
+        }
+        if replay_time < range_start_time {
+            match replay_event {
+                ReplayEvent::Recorded(event) => match &event.kind {
+                    EventKind::CameraMatrix(camera_matrix) => {
+                        camera_matrices.push(event, camera_matrix.clone());
+                    }
+                    EventKind::VisualOdometry(delta) => {
+                        let _ = vo_timestamps.measurement_times(
+                            event,
+                            delta,
+                            parameters.timestamp_mode,
+                            recording,
+                        );
+                    }
+                    _ => {}
+                },
+                ReplayEvent::VisualOdometryOverride(visual_odometry) => {
+                    let event = RecordedEvent {
+                        order: 0,
+                        log_time: visual_odometry.log_time,
+                        publish_time: visual_odometry.publish_time,
+                        kind: EventKind::VisualOdometry(visual_odometry.delta.clone()),
+                    };
+                    let _ = vo_timestamps.measurement_times(
+                        &event,
+                        &visual_odometry.delta,
+                        parameters.timestamp_mode,
+                        recording,
+                    );
+                }
+            }
+            continue;
+        }
 
         while next_solve_time <= replay_time {
             if has_pending_measurements {
@@ -298,7 +365,10 @@ fn run_resolve(
                     recording,
                     parameters.timestamp_mode,
                     next_solve_time,
-                    &stats,
+                    &mut stats,
+                    &parameters,
+                    last_visual_anchor_time,
+                    &mut last_accepted_robot_to_field,
                     &mut samples,
                 )?;
                 has_pending_measurements = false;
@@ -325,6 +395,7 @@ fn run_resolve(
                     &camera_matrices,
                     &mut frontend,
                     &mut stats,
+                    &mut vo_only,
                     &mut has_pending_measurements,
                 )?;
             }
@@ -357,6 +428,7 @@ fn run_resolve(
                         &camera_matrices,
                         &mut frontend,
                         &mut stats,
+                        &mut vo_only,
                         &mut has_pending_measurements,
                     )?;
                 }
@@ -364,7 +436,7 @@ fn run_resolve(
                 EventKind::FieldMarkAssociations(associations)
                     if parameters.include_global_features && !recompute_global_features =>
                 {
-                    ingest_recorded_field_mark_associations(
+                    if let Some(anchor_time) = ingest_recorded_field_mark_associations(
                         &mut frontend,
                         event,
                         associations,
@@ -372,12 +444,14 @@ fn run_resolve(
                         parameters.pose_hint_visual_min_features_per_frame,
                         &mut stats,
                         &mut has_pending_measurements,
-                    )?;
+                    )? {
+                        last_visual_anchor_time = Some(anchor_time);
+                    }
                 }
                 EventKind::DetectedObjects(frame)
                     if parameters.include_global_features && recompute_global_features =>
                 {
-                    ingest_recomputed_global_features(
+                    if let Some(anchor_time) = ingest_recomputed_global_features(
                         recording,
                         event,
                         frame,
@@ -388,7 +462,9 @@ fn run_resolve(
                         &field_dimensions,
                         &mut stats,
                         &mut has_pending_measurements,
-                    )?;
+                    )? {
+                        last_visual_anchor_time = Some(anchor_time);
+                    }
                 }
                 EventKind::DetectedObjects(_) | EventKind::FieldMarkAssociations(_) => {}
                 _ => {}
@@ -410,8 +486,11 @@ fn run_resolve(
             &mut frontend,
             recording,
             parameters.timestamp_mode,
-            recording.end_log_time(),
-            &stats,
+            range_end_time,
+            &mut stats,
+            &parameters,
+            last_visual_anchor_time,
+            &mut last_accepted_robot_to_field,
             &mut samples,
         )?;
     }
@@ -419,6 +498,7 @@ fn run_resolve(
     Ok(Some(ResolveResult {
         parameters,
         samples,
+        vo_trajectory: vo_only.trajectory,
         stats,
         elapsed: started.elapsed(),
     }))
@@ -459,6 +539,11 @@ fn backend_config(parameters: &ReplayParameters) -> BackendConfiguration {
         max_visual_odometry_extrinsic_rotation: parameters.max_visual_odometry_extrinsic_rotation,
         max_visual_odometry_extrinsic_translation: parameters
             .max_visual_odometry_extrinsic_translation,
+        require_recent_visual_anchor_for_large_pose_updates: parameters
+            .require_recent_visual_anchor_for_large_pose_updates,
+        max_visual_anchor_age: parameters.max_visual_anchor_age,
+        max_unanchored_translation_update: parameters.max_unanchored_translation_update,
+        max_unanchored_yaw_update: parameters.max_unanchored_yaw_update,
     };
     let mut config = backend_configuration_from_parameters(&localization_parameters);
     config.optimizer_max_iterations = parameters.optimizer_iterations.max(1);
@@ -481,6 +566,7 @@ fn ingest_vo_event(
     camera_matrices: &OnlineCameraMatrices,
     frontend: &mut VinsFrontend,
     stats: &mut ReplayStats,
+    vo_only: &mut VisualOdometryTrajectory,
     has_pending_measurements: &mut bool,
 ) -> Result<()> {
     stats.vo_received += 1;
@@ -519,6 +605,12 @@ fn ingest_vo_event(
         stats.vo_skipped_head_motion += 1;
         return Ok(());
     }
+    let current_robot_to_previous_robot = current_robot_to_previous_robot_from_visual_odometry(
+        delta,
+        &previous_camera_matrix.matrix.matrix.inner,
+        &current_camera_matrix.matrix.matrix.inner,
+    );
+    vo_only.push(recording, current_time, current_robot_to_previous_robot);
 
     if visual_odometry_is_gated(
         delta,
@@ -556,15 +648,65 @@ fn visual_odometry_is_gated(
         return false;
     }
 
-    let previous_robot_to_left_camera = robot_to_camera(previous_camera_matrix);
-    let current_robot_to_left_camera = robot_to_camera(current_camera_matrix);
-    let current_robot_to_previous_robot = previous_robot_to_left_camera.inverse()
-        * delta.current_left_camera_to_previous_left_camera
-        * current_robot_to_left_camera;
-
+    let current_robot_to_previous_robot = current_robot_to_previous_robot_from_visual_odometry(
+        delta,
+        previous_camera_matrix,
+        current_camera_matrix,
+    );
     max_translation
         .is_some_and(|max| current_robot_to_previous_robot.translation.vector.norm() > max)
         || max_rotation.is_some_and(|max| current_robot_to_previous_robot.rotation.angle() > max)
+}
+
+struct VisualOdometryTrajectory {
+    robot_to_field: nalgebra::Isometry3<f64>,
+    trajectory: Vec<TrajectoryPoint>,
+    segment_id: u64,
+    previous_seconds: Option<f64>,
+}
+
+impl VisualOdometryTrajectory {
+    fn new(robot_to_field: nalgebra::Isometry3<f64>) -> Self {
+        Self {
+            robot_to_field,
+            trajectory: Vec::new(),
+            segment_id: 0,
+            previous_seconds: None,
+        }
+    }
+
+    fn push(
+        &mut self,
+        recording: &Recording,
+        time: SystemTime,
+        current_robot_to_previous_robot: nalgebra::Isometry3<f32>,
+    ) {
+        self.robot_to_field = self.robot_to_field * current_robot_to_previous_robot.cast::<f64>();
+        let seconds = recording.seconds_since_start(time);
+        if let Some(previous_seconds) = self.previous_seconds
+            && seconds - previous_seconds > TRAJECTORY_MAX_SAMPLE_GAP_SECONDS
+        {
+            self.segment_id += 1;
+        }
+        self.previous_seconds = Some(seconds);
+        self.trajectory.push(TrajectoryPoint {
+            seconds,
+            robot_to_field: self.robot_to_field.framed_transform(),
+            segment_id: self.segment_id,
+        });
+    }
+}
+
+fn current_robot_to_previous_robot_from_visual_odometry(
+    delta: &VisualOdometryDelta,
+    previous_camera_matrix: &CameraMatrix,
+    current_camera_matrix: &CameraMatrix,
+) -> nalgebra::Isometry3<f32> {
+    let previous_robot_to_left_camera = robot_to_camera(previous_camera_matrix);
+    let current_robot_to_left_camera = robot_to_camera(current_camera_matrix);
+    previous_robot_to_left_camera.inverse()
+        * delta.current_left_camera_to_previous_left_camera
+        * current_robot_to_left_camera
 }
 
 fn visual_odometry_extrinsic_gate(parameters: &ReplayParameters) -> VisualOdometryExtrinsicGate {
@@ -575,6 +717,17 @@ fn visual_odometry_extrinsic_gate(parameters: &ReplayParameters) -> VisualOdomet
     }
 }
 
+fn visual_anchor_pose_gate(parameters: &ReplayParameters) -> VisualAnchorPoseGate {
+    VisualAnchorPoseGate {
+        require_recent_visual_anchor: parameters
+            .require_recent_visual_anchor_for_large_pose_updates,
+        max_anchor_age: parameters.max_visual_anchor_age,
+        max_unanchored_translation_update: parameters.max_unanchored_translation_update as f64,
+        max_unanchored_yaw_update: parameters.max_unanchored_yaw_update as f64,
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
 fn ingest_recorded_field_mark_associations(
     frontend: &mut VinsFrontend,
     event: &RecordedEvent,
@@ -583,14 +736,14 @@ fn ingest_recorded_field_mark_associations(
     pose_hint_visual_min_features_per_frame: usize,
     stats: &mut ReplayStats,
     has_pending_measurements: &mut bool,
-) -> Result<()> {
+) -> Result<Option<SystemTime>> {
     stats.global_frames += 1;
     let associations = localization_visual_associations(
         recorded_associations.inner.associations.clone(),
         pose_hint_visual_min_features_per_frame,
     );
     if associations.is_empty() {
-        return Ok(());
+        return Ok(None);
     }
 
     stats.global_frames_ingested += 1;
@@ -618,7 +771,7 @@ fn ingest_recorded_field_mark_associations(
         recorded_associations.inner.robot_to_camera.inner,
     )?;
     *has_pending_measurements = true;
-    Ok(())
+    Ok(Some(time))
 }
 
 fn localization_visual_associations(
@@ -653,11 +806,11 @@ fn ingest_recomputed_global_features(
     field_dimensions: &FieldDimensions,
     stats: &mut ReplayStats,
     has_pending_measurements: &mut bool,
-) -> Result<()> {
+) -> Result<Option<SystemTime>> {
     stats.global_frames += 1;
     let visual_features = find_detected_visual_features(&frame.objects);
     if visual_features.supported_feature_count() == 0 {
-        return Ok(());
+        return Ok(None);
     }
     stats.global_candidates += 1;
     let measurement_time =
@@ -666,12 +819,12 @@ fn ingest_recomputed_global_features(
         .nearest(measurement_time, parameters.timestamp_mode)
         .map(|nearest| nearest.matrix)
     else {
-        return Ok(());
+        return Ok(None);
     };
     if camera_matrix.distance_to(measurement_time, parameters.timestamp_mode)
         > CAMERA_MATRIX_MAX_TIME_DISTANCE
     {
-        return Ok(());
+        return Ok(None);
     }
 
     let pose_hint = frontend
@@ -738,8 +891,9 @@ fn ingest_recomputed_global_features(
             robot_to_camera(&camera_matrix.matrix.inner),
         )?;
         *has_pending_measurements = true;
+        return Ok(Some(measurement_time));
     }
-    Ok(())
+    Ok(None)
 }
 
 fn record_ingested_association_stats(
@@ -785,7 +939,10 @@ fn solve_and_record(
     recording: &Recording,
     timestamp_mode: TimestampMode,
     replay_time: SystemTime,
-    stats: &ReplayStats,
+    stats: &mut ReplayStats,
+    parameters: &ReplayParameters,
+    last_visual_anchor_time: Option<SystemTime>,
+    last_accepted_robot_to_field: &mut Option<nalgebra::Isometry3<f64>>,
     samples: &mut Vec<SolveSample>,
 ) -> Result<()> {
     let solve_started = Instant::now();
@@ -797,12 +954,27 @@ fn solve_and_record(
     let Some(result) = frontend.last_optimization_result() else {
         return Ok(());
     };
+    let mut robot_to_field = result.transform;
+    if should_reject_unanchored_pose_update(
+        visual_anchor_pose_gate(parameters),
+        last_accepted_robot_to_field.as_ref(),
+        &robot_to_field,
+        last_visual_anchor_time,
+        result.time,
+    ) {
+        if let Some(previous_robot_to_field) = last_accepted_robot_to_field {
+            robot_to_field = *previous_robot_to_field;
+            stats.pose_updates_reused_unanchored += 1;
+        }
+    } else {
+        *last_accepted_robot_to_field = Some(robot_to_field);
+    }
 
     samples.push(SolveSample {
         replay_seconds: recording.seconds_since_log_start(replay_time),
         graph_seconds: seconds_since(result.time, recording.graph_start_time(timestamp_mode)),
         solve_duration,
-        robot_to_field: result.transform.framed_transform(),
+        robot_to_field: robot_to_field.framed_transform(),
         diagnostics: backend.compute_last_solve_diagnostics(),
         stats: stats.clone(),
     });
