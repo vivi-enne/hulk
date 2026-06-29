@@ -189,6 +189,11 @@ pub fn run_trajectory_test(config: TrajectoryTestConfig) -> Result<(), Box<dyn E
             use_accelerometer_measurements: false,
             gyroscope_process_noise: Matrix3::identity() * 0.01,
             accelerometer_process_noise: Matrix3::identity() * 0.01,
+            gravity: Vector3::new(0.0, 0.0, 9.81),
+            use_imu_kinematics: true,
+            use_imu_roll_pitch: true,
+            use_imu_yaw: true,
+            use_current_spline_orientation: true,
             roll_pitch_yaw_noise: Matrix3::identity()
                 * solver_variance(config.roll_pitch_yaw_noise_std),
             visual_feature_noise: Matrix2::identity() * solver_variance(config.detection_noise_std),
@@ -196,7 +201,6 @@ pub fn run_trajectory_test(config: TrajectoryTestConfig) -> Result<(), Box<dyn E
             pose_hint_visual_huber_threshold: 2.0,
             visual_odometry_noise: SMatrix::<f64, 6, 6>::identity() * 0.05,
             foot_ground_sigma: 0.01,
-            gravity: Vector3::new(0.0, 0.0, 9.81),
         },
         initial_state,
     );

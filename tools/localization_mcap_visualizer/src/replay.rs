@@ -66,6 +66,10 @@ pub struct ReplayParameters {
     pub max_unanchored_yaw_update: f32,
     pub include_global_features: bool,
     pub include_imu: bool,
+    pub include_imu_kinematics: bool,
+    pub include_imu_roll_pitch: bool,
+    pub include_imu_yaw: bool,
+    pub include_current_spline_orientation: bool,
     pub include_foot_heights: bool,
     pub recompute_global_features: bool,
     pub global_localizer: GlobalLocalizerParameters,
@@ -130,6 +134,10 @@ impl Default for ReplayParameters {
             max_unanchored_yaw_update: localization_parameters.max_unanchored_yaw_update,
             include_global_features: true,
             include_imu: true,
+            include_imu_kinematics: true,
+            include_imu_roll_pitch: true,
+            include_imu_yaw: true,
+            include_current_spline_orientation: true,
             include_foot_heights: true,
             recompute_global_features: false,
             global_localizer: association_parameters.global_localizer,
@@ -399,7 +407,9 @@ fn run_resolve(
                     &mut has_pending_measurements,
                 )?;
             }
-            ReplayEvent::VisualOdometryOverride(_) => {}
+            ReplayEvent::VisualOdometryOverride(_) => {
+                stats.vo_received += 1;
+            }
             ReplayEvent::Recorded(event) => match &event.kind {
                 EventKind::Imu(imu) if parameters.include_imu => {
                     frontend.ingest_imu(event.publish_time, *imu)?;
@@ -432,7 +442,9 @@ fn run_resolve(
                         &mut has_pending_measurements,
                     )?;
                 }
-                EventKind::VisualOdometry(_) => {}
+                EventKind::VisualOdometry(_) => {
+                    stats.vo_received += 1;
+                }
                 EventKind::FieldMarkAssociations(associations)
                     if parameters.include_global_features && !recompute_global_features =>
                 {
@@ -553,6 +565,11 @@ fn backend_config(parameters: &ReplayParameters) -> BackendConfiguration {
         config.visual_odometry_noise =
             SMatrix::<f64, 6, 6>::identity() * parameters.visual_odometry_covariance.max(1.0e-12);
     }
+    config.use_imu_kinematics = parameters.include_imu && parameters.include_imu_kinematics;
+    config.use_imu_roll_pitch = parameters.include_imu && parameters.include_imu_roll_pitch;
+    config.use_imu_yaw = parameters.include_imu && parameters.include_imu_yaw;
+    config.use_current_spline_orientation =
+        parameters.include_imu && parameters.include_current_spline_orientation;
     config
 }
 
@@ -1078,6 +1095,7 @@ mod tests {
                 solve_sample_at(0.1),
                 solve_sample_at(0.1 + TRAJECTORY_MAX_SAMPLE_GAP_SECONDS + 0.01),
             ],
+            vo_trajectory: Vec::new(),
             stats: ReplayStats::default(),
             elapsed: Duration::ZERO,
         };

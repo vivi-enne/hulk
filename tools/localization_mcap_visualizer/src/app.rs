@@ -72,6 +72,22 @@ pub struct LocalizationMcapVisualizerApp {
     last_sent_show_vo_only: bool,
 }
 
+#[derive(Clone, Copy, Debug)]
+enum ComponentPreset {
+    Full,
+    VisualOdometryOnly,
+    GlobalFeaturesOnly,
+    VisualAssociationsOnly,
+    ImuRollPitchOnly,
+    ImuYawOnly,
+    ImuOrientationOnly,
+    ImuKinematicsOnly,
+    FootHeightsOnly,
+    VisualOdometryAndImu,
+    VisualOdometryAndFootHeights,
+    VisualOdometryAndVisual,
+}
+
 impl LocalizationMcapVisualizerApp {
     pub fn new(
         creation_context: &CreationContext,
@@ -737,6 +753,46 @@ impl LocalizationMcapVisualizerApp {
                     );
                 });
                 ui.separator();
+                ui.label(RichText::new("Component Presets").strong());
+                ui.horizontal_wrapped(|ui| {
+                    if ui.button("Full").clicked() {
+                        self.apply_component_preset(ComponentPreset::Full);
+                    }
+                    if ui.button("VO only").clicked() {
+                        self.apply_component_preset(ComponentPreset::VisualOdometryOnly);
+                    }
+                    if ui.button("Global only").clicked() {
+                        self.apply_component_preset(ComponentPreset::GlobalFeaturesOnly);
+                    }
+                    if ui.button("Visual assoc").clicked() {
+                        self.apply_component_preset(ComponentPreset::VisualAssociationsOnly);
+                    }
+                    if ui.button("IMU R/P").clicked() {
+                        self.apply_component_preset(ComponentPreset::ImuRollPitchOnly);
+                    }
+                    if ui.button("IMU yaw").clicked() {
+                        self.apply_component_preset(ComponentPreset::ImuYawOnly);
+                    }
+                    if ui.button("IMU RPY").clicked() {
+                        self.apply_component_preset(ComponentPreset::ImuOrientationOnly);
+                    }
+                    if ui.button("IMU kin").clicked() {
+                        self.apply_component_preset(ComponentPreset::ImuKinematicsOnly);
+                    }
+                    if ui.button("Foot").clicked() {
+                        self.apply_component_preset(ComponentPreset::FootHeightsOnly);
+                    }
+                    if ui.button("VO+IMU").clicked() {
+                        self.apply_component_preset(ComponentPreset::VisualOdometryAndImu);
+                    }
+                    if ui.button("VO+Foot").clicked() {
+                        self.apply_component_preset(ComponentPreset::VisualOdometryAndFootHeights);
+                    }
+                    if ui.button("VO+Visual").clicked() {
+                        self.apply_component_preset(ComponentPreset::VisualOdometryAndVisual);
+                    }
+                });
+                ui.separator();
                 ui.checkbox(
                     &mut self.parameters.include_visual_odometry,
                     "include visual odometry",
@@ -749,7 +805,22 @@ impl LocalizationMcapVisualizerApp {
                     &mut self.parameters.recompute_global_features,
                     "recompute global features from detections",
                 );
-                ui.checkbox(&mut self.parameters.include_imu, "include IMU orientation");
+                ui.checkbox(&mut self.parameters.include_imu, "include IMU");
+                ui.indent("imu_component_toggles", |ui| {
+                    ui.checkbox(
+                        &mut self.parameters.include_imu_roll_pitch,
+                        "roll/pitch attitude",
+                    );
+                    ui.checkbox(&mut self.parameters.include_imu_yaw, "relative yaw");
+                    ui.checkbox(
+                        &mut self.parameters.include_current_spline_orientation,
+                        "current RPY inside active interval",
+                    );
+                    ui.checkbox(
+                        &mut self.parameters.include_imu_kinematics,
+                        "gyro/accel kinematics",
+                    );
+                });
                 ui.checkbox(
                     &mut self.parameters.include_foot_heights,
                     "include foot heights",
@@ -932,6 +1003,66 @@ impl LocalizationMcapVisualizerApp {
             });
     }
 
+    fn apply_component_preset(&mut self, preset: ComponentPreset) {
+        let pose_hint_enabled = matches!(
+            preset,
+            ComponentPreset::Full | ComponentPreset::VisualAssociationsOnly
+        );
+        self.parameters.include_visual_odometry = matches!(
+            preset,
+            ComponentPreset::Full
+                | ComponentPreset::VisualOdometryOnly
+                | ComponentPreset::VisualOdometryAndImu
+                | ComponentPreset::VisualOdometryAndFootHeights
+                | ComponentPreset::VisualOdometryAndVisual
+        );
+        self.parameters.include_global_features = matches!(
+            preset,
+            ComponentPreset::Full
+                | ComponentPreset::GlobalFeaturesOnly
+                | ComponentPreset::VisualAssociationsOnly
+                | ComponentPreset::VisualOdometryAndVisual
+        );
+        self.parameters.include_foot_heights = matches!(
+            preset,
+            ComponentPreset::Full
+                | ComponentPreset::FootHeightsOnly
+                | ComponentPreset::VisualOdometryAndFootHeights
+        );
+
+        self.parameters.include_imu_roll_pitch = matches!(
+            preset,
+            ComponentPreset::Full
+                | ComponentPreset::ImuRollPitchOnly
+                | ComponentPreset::ImuOrientationOnly
+                | ComponentPreset::VisualOdometryAndImu
+        );
+        self.parameters.include_imu_yaw = matches!(
+            preset,
+            ComponentPreset::Full
+                | ComponentPreset::ImuYawOnly
+                | ComponentPreset::ImuOrientationOnly
+                | ComponentPreset::VisualOdometryAndImu
+        );
+        self.parameters.include_current_spline_orientation = matches!(
+            preset,
+            ComponentPreset::Full
+                | ComponentPreset::ImuOrientationOnly
+                | ComponentPreset::VisualOdometryAndImu
+        );
+        self.parameters.include_imu_kinematics = matches!(
+            preset,
+            ComponentPreset::Full
+                | ComponentPreset::ImuKinematicsOnly
+                | ComponentPreset::VisualOdometryAndImu
+        );
+        self.parameters.include_imu = self.parameters.include_imu_roll_pitch
+            || self.parameters.include_imu_yaw
+            || self.parameters.include_current_spline_orientation
+            || self.parameters.include_imu_kinematics;
+        self.parameters.pose_hint.enabled = pose_hint_enabled;
+    }
+
     fn resolve_controls(&mut self, ui: &mut Ui) {
         match &mut self.resolve {
             ResolveState::Running {
@@ -1032,6 +1163,10 @@ impl LocalizationMcapVisualizerApp {
             stats.vo_skipped_stale_camera_matrix
         ));
         ui.label(format!(
+            "IMU/foot: {} IMU messages, {} foot-height frames ingested",
+            stats.imu_ingested, stats.foot_heights_ingested
+        ));
+        ui.label(format!(
             "Pose: {} unanchored jumps reused previous pose",
             stats.pose_updates_reused_unanchored
         ));
@@ -1096,6 +1231,16 @@ impl LocalizationMcapVisualizerApp {
             result.parameters.optimizer_iterations,
             result.parameters.solve_cadence_ms,
             result.parameters.visual_feature_noise_variance,
+        ));
+        ui.label(format!(
+            "components: VO={} visual={} pose-hint={} IMU[rp={}, yaw={}, kin={}] foot={}",
+            result.parameters.include_visual_odometry,
+            result.parameters.include_global_features,
+            result.parameters.pose_hint.enabled,
+            result.parameters.include_imu && result.parameters.include_imu_roll_pitch,
+            result.parameters.include_imu && result.parameters.include_imu_yaw,
+            result.parameters.include_imu && result.parameters.include_imu_kinematics,
+            result.parameters.include_foot_heights,
         ));
     }
 

@@ -658,7 +658,7 @@ fn index_detected_objects_by_image(
                 })
             })
             .or_else(|| {
-                use_stream_order_fallback
+                (use_stream_order_fallback && frame.image_time.is_none())
                     .then(|| {
                         let image_index = fallback_image_index;
                         fallback_image_index += 1;

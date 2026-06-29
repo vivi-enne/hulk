@@ -74,6 +74,10 @@ pub struct BackendConfiguration {
     pub accelerometer_process_noise: Matrix3<f64>,
     pub gravity: Vector3<f64>,
 
+    pub use_imu_kinematics: bool,
+    pub use_imu_roll_pitch: bool,
+    pub use_imu_yaw: bool,
+    pub use_current_spline_orientation: bool,
     pub roll_pitch_yaw_noise: Matrix3<f64>,
     pub visual_feature_noise: Matrix2<f64>,
     pub pose_hint_visual_feature_noise: Matrix2<f64>,
@@ -303,11 +307,18 @@ impl VinsBackend {
         };
         self.init_intervals_through(last_interval_index);
 
-        let kinematics_measurements =
-            self.keep_imu_kinematics_measurements(measurements.iter().cloned());
-        self.add_imu_kinematics_factors(kinematics_measurements);
+        if self.config.use_imu_kinematics {
+            let kinematics_measurements =
+                self.keep_imu_kinematics_measurements(measurements.iter().cloned());
+            self.add_imu_kinematics_factors(kinematics_measurements);
+        }
 
-        self.process_imu_attitude_measurements(measurements);
+        if self.config.use_imu_roll_pitch
+            || self.config.use_imu_yaw
+            || self.config.use_current_spline_orientation
+        {
+            self.process_imu_attitude_measurements(measurements);
+        }
     }
 
     fn process_imu_attitude_measurements(&mut self, measurements: Vec<ImuMeasurement>) {
@@ -375,17 +386,22 @@ impl VinsBackend {
     }
 
     fn add_imu_knot_orientation(&mut self, knot_index: u32, measured_orientation: SO3) {
-        self.add_roll_pitch_prior_if_available(State(knot_index), measured_orientation.clone());
+        if self.config.use_imu_roll_pitch {
+            self.add_roll_pitch_prior_if_available(State(knot_index), measured_orientation.clone());
+        }
 
-        if let Some(previous) = self.last_imu_knot_orientation.as_ref()
-            && previous.index + 1 == knot_index
-            && self.interval_states_available(previous.index)
-        {
-            self.add_relative_yaw_factor_if_available(
-                previous.index,
-                previous.orientation.clone(),
-                measured_orientation.clone(),
-            );
+        if self.config.use_imu_yaw {
+            if let Some(previous) = self.last_imu_knot_orientation.as_ref() {
+                if previous.index + 1 == knot_index
+                    && self.interval_states_available(previous.index)
+                {
+                    self.add_relative_yaw_factor_if_available(
+                        previous.index,
+                        previous.orientation.clone(),
+                        measured_orientation.clone(),
+                    );
+                }
+            }
         }
 
         self.last_imu_knot_orientation = Some(ImuKnotOrientation {
@@ -439,6 +455,13 @@ impl VinsBackend {
     }
 
     fn add_current_spline_orientation_factor(&mut self) {
+        if !self.config.use_current_spline_orientation
+            || !self.config.use_imu_roll_pitch
+            || !self.config.use_imu_yaw
+        {
+            return;
+        }
+
         let Some(current_measurement) = self.latest_imu_attitude_measurement.clone() else {
             return;
         };
@@ -1417,13 +1440,17 @@ mod tests {
             use_accelerometer_measurements: false,
             gyroscope_process_noise: Matrix3::identity() * 0.01,
             accelerometer_process_noise: Matrix3::identity() * 0.01,
+            gravity: Vector3::new(0.0, 0.0, 9.81),
+            use_imu_kinematics: true,
+            use_imu_roll_pitch: true,
+            use_imu_yaw: true,
+            use_current_spline_orientation: true,
             roll_pitch_yaw_noise: Matrix3::identity() * 0.01,
             visual_feature_noise: Matrix2::identity() * 5.0,
             pose_hint_visual_feature_noise: Matrix2::identity() * 100.0,
             pose_hint_visual_huber_threshold: 2.0,
             visual_odometry_noise: SMatrix::<f64, 6, 6>::identity() * 0.05,
             foot_ground_sigma: 0.01,
-            gravity: Vector3::new(0.0, 0.0, 9.81),
         }
     }
 

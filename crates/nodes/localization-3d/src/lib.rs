@@ -270,6 +270,10 @@ fn backend_configuration_with_pose_hint(
         gyroscope_process_noise: process_noise,
         roll_pitch_yaw_noise: Matrix3::from_diagonal(&Vector3::new(0.01, 0.01, 0.00001)),
         accelerometer_process_noise: process_noise,
+        use_imu_kinematics: true,
+        use_imu_roll_pitch: true,
+        use_imu_yaw: true,
+        use_current_spline_orientation: true,
         visual_feature_noise: Matrix2::identity() * visual_feature_noise_variance,
         pose_hint_visual_feature_noise: Matrix2::identity()
             * pose_hint_visual_feature_noise_variance,
