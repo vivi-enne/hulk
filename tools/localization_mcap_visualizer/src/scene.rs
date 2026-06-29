@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{path::Path, sync::Arc};
 
 use bevy::{
     asset::RenderAssetUsages,
@@ -9,12 +9,18 @@ use bevy::{
 use bevy_panorbit_camera::PanOrbitCamera;
 use coordinate_systems::{Field, Robot};
 use field_mark_association::GlobalLocalizationDetailedDebug;
+use kinematics::robot_kinematics::RobotKinematics;
 use projection::camera_matrix::CameraMatrix;
 use types::field_dimensions::FieldDimensions;
 
 use crate::mcap_recording::{CameraImage, TRAJECTORY_MAX_SAMPLE_GAP_SECONDS, TrajectoryPoint};
 
 const CAMERA_VIEWPORT_DEPTH: f32 = 1.0;
+const MAX_TRACE_TRAJECTORIES: usize = 12;
+const K1_ASSET_DIRECTORY: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../mujoco-simulator/mujoco-simulator/K1"
+);
 
 pub fn configure(app: &mut App) {
     app.insert_resource(SceneData::default())
@@ -31,6 +37,7 @@ pub fn configure(app: &mut App) {
                 update_field_markings,
                 configure_view_camera_once,
                 update_robot_marker,
+                update_robot_links,
                 update_camera_viewport,
                 update_camera_image,
                 update_trajectories,
@@ -44,6 +51,8 @@ pub struct SceneData {
     field_dimensions: FieldDimensions,
     field_dimensions_version: SceneVersion,
     current_robot_to_field: Option<linear_algebra::Isometry3<Robot, Field>>,
+    project_robot_marker_to_ground: bool,
+    robot_kinematics: Option<Arc<RobotKinematics>>,
     camera_matrix: Option<CameraMatrix>,
     camera_version: SceneVersion,
     camera_frame: Option<SceneCameraFrame>,
@@ -51,6 +60,8 @@ pub struct SceneData {
     recorded_trajectory_version: SceneVersion,
     resolved_trajectory: Vec<TrajectoryPoint>,
     resolved_trajectory_version: SceneVersion,
+    trace_trajectories: Vec<SceneTrajectoryTrace>,
+    trace_trajectories_version: SceneVersion,
     global_debug: Option<Arc<GlobalLocalizationDetailedDebug>>,
     global_debug_version: SceneVersion,
 }
@@ -76,6 +87,10 @@ impl SceneData {
         self.resolved_trajectory_version
     }
 
+    pub fn trace_trajectories_version(&self) -> SceneVersion {
+        self.trace_trajectories_version
+    }
+
     pub fn global_debug_version(&self) -> SceneVersion {
         self.global_debug_version
     }
@@ -90,6 +105,14 @@ impl SceneData {
         current_robot_to_field: Option<linear_algebra::Isometry3<Robot, Field>>,
     ) {
         self.current_robot_to_field = current_robot_to_field;
+    }
+
+    pub fn set_project_robot_marker_to_ground(&mut self, project_to_ground: bool) {
+        self.project_robot_marker_to_ground = project_to_ground;
+    }
+
+    pub fn set_robot_kinematics(&mut self, robot_kinematics: Option<Arc<RobotKinematics>>) {
+        self.robot_kinematics = robot_kinematics;
     }
 
     pub fn set_camera_matrix(&mut self, camera_matrix: Option<CameraMatrix>) {
@@ -111,10 +134,21 @@ impl SceneData {
         self.resolved_trajectory_version = self.resolved_trajectory_version.next();
     }
 
+    pub fn set_trace_trajectories(&mut self, trajectories: Vec<SceneTrajectoryTrace>) {
+        self.trace_trajectories = trajectories;
+        self.trace_trajectories_version = self.trace_trajectories_version.next();
+    }
+
     pub fn set_global_debug(&mut self, global_debug: Option<Arc<GlobalLocalizationDetailedDebug>>) {
         self.global_debug = global_debug;
         self.global_debug_version = self.global_debug_version.next();
     }
+}
+
+#[derive(Clone, Debug)]
+pub struct SceneTrajectoryTrace {
+    pub trajectory: Vec<TrajectoryPoint>,
+    pub color: [f32; 4],
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -161,6 +195,254 @@ struct FieldMarkings;
 struct RobotMarker;
 
 #[derive(Component)]
+struct RobotLink {
+    frame: RobotFrame,
+}
+
+#[derive(Clone, Copy)]
+enum RobotFrame {
+    Torso,
+    Neck,
+    Head,
+    LeftInnerShoulder,
+    LeftOuterShoulder,
+    LeftUpperArm,
+    LeftForearm,
+    RightInnerShoulder,
+    RightOuterShoulder,
+    RightUpperArm,
+    RightForearm,
+    LeftPelvis,
+    LeftHip,
+    LeftThigh,
+    LeftTibia,
+    LeftAnkle,
+    LeftFoot,
+    RightPelvis,
+    RightHip,
+    RightThigh,
+    RightTibia,
+    RightAnkle,
+    RightFoot,
+}
+
+impl RobotFrame {
+    fn isometry(self, kinematics: &RobotKinematics) -> nalgebra::Isometry3<f32> {
+        match self {
+            Self::Torso => kinematics.torso.torso_to_robot.inner,
+            Self::Neck => kinematics.head.neck_to_robot.inner,
+            Self::Head => kinematics.head.head_to_robot.inner,
+            Self::LeftInnerShoulder => kinematics.left_arm.inner_shoulder_to_robot.inner,
+            Self::LeftOuterShoulder => kinematics.left_arm.outer_shoulder_to_robot.inner,
+            Self::LeftUpperArm => kinematics.left_arm.upper_arm_to_robot.inner,
+            Self::LeftForearm => kinematics.left_arm.forearm_to_robot.inner,
+            Self::RightInnerShoulder => kinematics.right_arm.inner_shoulder_to_robot.inner,
+            Self::RightOuterShoulder => kinematics.right_arm.outer_shoulder_to_robot.inner,
+            Self::RightUpperArm => kinematics.right_arm.upper_arm_to_robot.inner,
+            Self::RightForearm => kinematics.right_arm.forearm_to_robot.inner,
+            Self::LeftPelvis => kinematics.left_leg.pelvis_to_robot.inner,
+            Self::LeftHip => kinematics.left_leg.hip_to_robot.inner,
+            Self::LeftThigh => kinematics.left_leg.thigh_to_robot.inner,
+            Self::LeftTibia => kinematics.left_leg.tibia_to_robot.inner,
+            Self::LeftAnkle => kinematics.left_leg.ankle_to_robot.inner,
+            Self::LeftFoot => kinematics.left_leg.foot_to_robot.inner,
+            Self::RightPelvis => kinematics.right_leg.pelvis_to_robot.inner,
+            Self::RightHip => kinematics.right_leg.hip_to_robot.inner,
+            Self::RightThigh => kinematics.right_leg.thigh_to_robot.inner,
+            Self::RightTibia => kinematics.right_leg.tibia_to_robot.inner,
+            Self::RightAnkle => kinematics.right_leg.ankle_to_robot.inner,
+            Self::RightFoot => kinematics.right_leg.foot_to_robot.inner,
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+enum RobotMaterial {
+    SilverPlastic,
+    BlackPlastic,
+    BlackMetalRough,
+    Logo,
+}
+
+impl RobotMaterial {
+    fn material(self, materials: &mut Assets<StandardMaterial>) -> Handle<StandardMaterial> {
+        let (color, metallic, roughness, reflectance) = match self {
+            Self::SilverPlastic => (Color::srgba(0.8, 0.8, 0.8, 1.0), 0.0, 0.5, 0.0),
+            Self::BlackPlastic => (Color::srgba(0.1, 0.1, 0.1, 1.0), 0.0, 0.5, 0.0),
+            Self::BlackMetalRough => (Color::srgba(0.1, 0.1, 0.1, 1.0), 0.1, 0.9, 0.1),
+            Self::Logo => (
+                Color::srgba(0.792_156_9, 0.819_607_85, 0.933_333_34, 1.0),
+                0.0,
+                0.5,
+                0.0,
+            ),
+        };
+
+        materials.add(StandardMaterial {
+            base_color: color,
+            metallic,
+            perceptual_roughness: roughness,
+            reflectance,
+            ..default()
+        })
+    }
+}
+
+struct LinkDescriptor {
+    name: &'static str,
+    mesh: &'static str,
+    material: RobotMaterial,
+    frame: RobotFrame,
+}
+
+const LINK_DESCRIPTORS: &[LinkDescriptor] = &[
+    LinkDescriptor {
+        name: "Trunk",
+        mesh: "Trunk.STL",
+        material: RobotMaterial::SilverPlastic,
+        frame: RobotFrame::Torso,
+    },
+    LinkDescriptor {
+        name: "K1logo",
+        mesh: "K1logo.STL",
+        material: RobotMaterial::Logo,
+        frame: RobotFrame::Torso,
+    },
+    LinkDescriptor {
+        name: "Head_1",
+        mesh: "Head_1.STL",
+        material: RobotMaterial::BlackPlastic,
+        frame: RobotFrame::Neck,
+    },
+    LinkDescriptor {
+        name: "Head_2",
+        mesh: "Head_2.STL",
+        material: RobotMaterial::BlackPlastic,
+        frame: RobotFrame::Head,
+    },
+    LinkDescriptor {
+        name: "Left_Arm_1",
+        mesh: "Left_Arm_1.STL",
+        material: RobotMaterial::BlackMetalRough,
+        frame: RobotFrame::LeftInnerShoulder,
+    },
+    LinkDescriptor {
+        name: "Left_Arm_2",
+        mesh: "Left_Arm_2.STL",
+        material: RobotMaterial::BlackMetalRough,
+        frame: RobotFrame::LeftOuterShoulder,
+    },
+    LinkDescriptor {
+        name: "Left_Arm_3",
+        mesh: "Left_Arm_3.STL",
+        material: RobotMaterial::BlackMetalRough,
+        frame: RobotFrame::LeftUpperArm,
+    },
+    LinkDescriptor {
+        name: "Left_Arm_4",
+        mesh: "Left_Arm_4.STL",
+        material: RobotMaterial::BlackMetalRough,
+        frame: RobotFrame::LeftForearm,
+    },
+    LinkDescriptor {
+        name: "Right_Arm_1",
+        mesh: "Right_Arm_1.STL",
+        material: RobotMaterial::BlackMetalRough,
+        frame: RobotFrame::RightInnerShoulder,
+    },
+    LinkDescriptor {
+        name: "Right_Arm_2",
+        mesh: "Right_Arm_2.STL",
+        material: RobotMaterial::BlackMetalRough,
+        frame: RobotFrame::RightOuterShoulder,
+    },
+    LinkDescriptor {
+        name: "Right_Arm_3",
+        mesh: "Right_Arm_3.STL",
+        material: RobotMaterial::BlackMetalRough,
+        frame: RobotFrame::RightUpperArm,
+    },
+    LinkDescriptor {
+        name: "Right_Arm_4",
+        mesh: "Right_Arm_4.STL",
+        material: RobotMaterial::BlackMetalRough,
+        frame: RobotFrame::RightForearm,
+    },
+    LinkDescriptor {
+        name: "Left_Hip_Pitch",
+        mesh: "Left_Hip_Pitch.STL",
+        material: RobotMaterial::BlackMetalRough,
+        frame: RobotFrame::LeftPelvis,
+    },
+    LinkDescriptor {
+        name: "Left_Hip_Roll",
+        mesh: "Left_Hip_Roll.STL",
+        material: RobotMaterial::BlackMetalRough,
+        frame: RobotFrame::LeftHip,
+    },
+    LinkDescriptor {
+        name: "Left_Hip_Yaw",
+        mesh: "Left_Hip_Yaw.STL",
+        material: RobotMaterial::BlackMetalRough,
+        frame: RobotFrame::LeftThigh,
+    },
+    LinkDescriptor {
+        name: "Left_Shank",
+        mesh: "Left_Shank.STL",
+        material: RobotMaterial::BlackPlastic,
+        frame: RobotFrame::LeftTibia,
+    },
+    LinkDescriptor {
+        name: "Left_Ankle_Cross",
+        mesh: "Left_Ankle_Cross.STL",
+        material: RobotMaterial::BlackPlastic,
+        frame: RobotFrame::LeftAnkle,
+    },
+    LinkDescriptor {
+        name: "Left_Foot",
+        mesh: "Left_Foot.STL",
+        material: RobotMaterial::SilverPlastic,
+        frame: RobotFrame::LeftFoot,
+    },
+    LinkDescriptor {
+        name: "Right_Hip_Pitch",
+        mesh: "Right_Hip_Pitch.STL",
+        material: RobotMaterial::BlackMetalRough,
+        frame: RobotFrame::RightPelvis,
+    },
+    LinkDescriptor {
+        name: "Right_Hip_Roll",
+        mesh: "Right_Hip_Roll.STL",
+        material: RobotMaterial::BlackMetalRough,
+        frame: RobotFrame::RightHip,
+    },
+    LinkDescriptor {
+        name: "Right_Hip_Yaw",
+        mesh: "Right_Hip_Yaw.STL",
+        material: RobotMaterial::BlackMetalRough,
+        frame: RobotFrame::RightThigh,
+    },
+    LinkDescriptor {
+        name: "Right_Shank",
+        mesh: "Right_Shank.STL",
+        material: RobotMaterial::BlackPlastic,
+        frame: RobotFrame::RightTibia,
+    },
+    LinkDescriptor {
+        name: "Right_Ankle_Cross",
+        mesh: "Right_Ankle_Cross.STL",
+        material: RobotMaterial::BlackPlastic,
+        frame: RobotFrame::RightAnkle,
+    },
+    LinkDescriptor {
+        name: "Right_Foot",
+        mesh: "Right_Foot.STL",
+        material: RobotMaterial::SilverPlastic,
+        frame: RobotFrame::RightFoot,
+    },
+];
+
+#[derive(Component)]
 struct CameraFrustum;
 
 #[derive(Component)]
@@ -174,6 +456,11 @@ struct RecordedTrajectory;
 
 #[derive(Component)]
 struct ResolvedTrajectory;
+
+#[derive(Component)]
+struct TraceTrajectory {
+    index: usize,
+}
 
 #[derive(Component)]
 struct GlobalDebugLines;
@@ -273,6 +560,29 @@ fn setup_scene(
         Transform::default(),
         Visibility::Hidden,
     ));
+    for descriptor in LINK_DESCRIPTORS {
+        let mesh_path = Path::new(K1_ASSET_DIRECTORY)
+            .join("meshes")
+            .join(descriptor.mesh);
+        let mesh = match load_binary_stl(&mesh_path) {
+            Ok(mesh) => mesh,
+            Err(error) => {
+                eprintln!("failed to load {}: {error}", mesh_path.display());
+                continue;
+            }
+        };
+
+        commands.spawn((
+            Name::new(descriptor.name),
+            RobotLink {
+                frame: descriptor.frame,
+            },
+            Mesh3d(meshes.add(mesh)),
+            MeshMaterial3d(descriptor.material.material(&mut materials)),
+            Transform::default(),
+            Visibility::Hidden,
+        ));
+    }
     commands.spawn((
         CameraFrustum,
         Mesh3d(meshes.add(empty_mesh(PrimitiveTopology::LineList))),
@@ -302,6 +612,21 @@ fn setup_scene(
         MeshMaterial3d(resolved_trajectory_material),
         Transform::default(),
     ));
+    for index in 0..MAX_TRACE_TRAJECTORIES {
+        let trace_trajectory_material = materials.add(StandardMaterial {
+            base_color: Color::WHITE,
+            alpha_mode: AlphaMode::Blend,
+            unlit: true,
+            ..default()
+        });
+        commands.spawn((
+            TraceTrajectory { index },
+            Mesh3d(meshes.add(empty_mesh(PrimitiveTopology::LineList))),
+            MeshMaterial3d(trace_trajectory_material),
+            Transform::default(),
+            Visibility::Hidden,
+        ));
+    }
     commands.spawn((
         GlobalDebugLines,
         Mesh3d(meshes.add(empty_mesh(PrimitiveTopology::LineList))),
@@ -370,11 +695,40 @@ fn update_robot_marker(
     mut markers: Query<(&mut Transform, &mut Visibility), With<RobotMarker>>,
 ) {
     for (mut transform, mut visibility) in &mut markers {
+        if data.robot_kinematics.is_some() {
+            *visibility = Visibility::Hidden;
+            continue;
+        }
         let Some(robot_to_field) = data.current_robot_to_field else {
             *visibility = Visibility::Hidden;
             continue;
         };
-        *transform = transform_from_isometry(robot_to_field.inner);
+        *transform = if data.project_robot_marker_to_ground {
+            transform_from_ground_projected_isometry(robot_to_field.inner)
+        } else {
+            transform_from_isometry(robot_to_field.inner)
+        };
+        *visibility = Visibility::Visible;
+    }
+}
+
+fn update_robot_links(
+    data: Res<SceneData>,
+    mut links: Query<(&RobotLink, &mut Transform, &mut Visibility)>,
+) {
+    let (Some(robot_to_field), Some(robot_kinematics)) = (
+        data.current_robot_to_field,
+        data.robot_kinematics.as_deref(),
+    ) else {
+        for (_, _, mut visibility) in &mut links {
+            *visibility = Visibility::Hidden;
+        }
+        return;
+    };
+
+    for (link, mut transform, mut visibility) in &mut links {
+        *transform =
+            transform_from_isometry(robot_to_field.inner * link.frame.isometry(robot_kinematics));
         *visibility = Visibility::Visible;
     }
 }
@@ -442,10 +796,17 @@ fn update_camera_image(
 
 fn update_trajectories(
     data: Res<SceneData>,
-    mut previous_versions: Local<(SceneVersion, SceneVersion)>,
+    mut previous_versions: Local<(SceneVersion, SceneVersion, SceneVersion)>,
     recorded: Query<&Mesh3d, With<RecordedTrajectory>>,
     resolved: Query<&Mesh3d, With<ResolvedTrajectory>>,
+    mut traces: Query<(
+        &Mesh3d,
+        &MeshMaterial3d<StandardMaterial>,
+        &TraceTrajectory,
+        &mut Visibility,
+    )>,
     mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
     if previous_versions.0 != data.recorded_trajectory_version {
         for mesh in &recorded {
@@ -458,6 +819,30 @@ fn update_trajectories(
             let _ = meshes.insert(mesh.id(), trajectory_mesh(&data.resolved_trajectory));
         }
         previous_versions.1 = data.resolved_trajectory_version;
+    }
+    if previous_versions.2 != data.trace_trajectories_version {
+        for (mesh, material, trace_entity, mut visibility) in &mut traces {
+            let Some(trace) = data.trace_trajectories.get(trace_entity.index) else {
+                let _ = meshes.insert(mesh.id(), empty_mesh(PrimitiveTopology::LineList));
+                *visibility = Visibility::Hidden;
+                continue;
+            };
+            let _ = meshes.insert(
+                mesh.id(),
+                trajectory_mesh_with_height(&trace.trajectory, 0.03),
+            );
+            if let Some(material) = materials.get_mut(material.id()) {
+                material.base_color = Color::srgba(
+                    trace.color[0],
+                    trace.color[1],
+                    trace.color[2],
+                    trace.color[3],
+                );
+                material.alpha_mode = AlphaMode::Blend;
+            }
+            *visibility = Visibility::Visible;
+        }
+        previous_versions.2 = data.trace_trajectories_version;
     }
 }
 
@@ -581,6 +966,10 @@ fn camera_frame_image(frame: &CameraImage) -> Image {
 }
 
 fn trajectory_mesh(points: &[TrajectoryPoint]) -> Mesh {
+    trajectory_mesh_with_height(points, 0.0)
+}
+
+fn trajectory_mesh_with_height(points: &[TrajectoryPoint], height_offset: f32) -> Mesh {
     let mut positions = Vec::new();
     for window in points.windows(2) {
         if !window[0].seconds.is_finite() || !window[1].seconds.is_finite() {
@@ -604,8 +993,8 @@ fn trajectory_mesh(points: &[TrajectoryPoint]) -> Mesh {
             .translation
             .vector
             .cast::<f32>();
-        positions.push(convert_point([a.x, a.y, a.z]).to_array());
-        positions.push(convert_point([b.x, b.y, b.z]).to_array());
+        positions.push(convert_point([a.x, a.y, a.z + height_offset]).to_array());
+        positions.push(convert_point([b.x, b.y, b.z + height_offset]).to_array());
     }
 
     let mut mesh = Mesh::new(PrimitiveTopology::LineList, RenderAssetUsages::RENDER_WORLD);
@@ -894,9 +1283,85 @@ fn field_mesh() -> Mesh {
     mesh
 }
 
+fn load_binary_stl(path: &Path) -> Result<Mesh, String> {
+    let bytes = std::fs::read(path).map_err(|error| format!("{}: {error}", path.display()))?;
+    if bytes.len() < 84 {
+        return Err("file is too short to be a binary STL".to_string());
+    }
+
+    let triangle_count =
+        u32::from_le_bytes(bytes[80..84].try_into().expect("slice has length 4")) as usize;
+    let expected_len = 84 + triangle_count * 50;
+    if bytes.len() < expected_len {
+        return Err(format!(
+            "expected at least {expected_len} bytes for {triangle_count} triangles, got {}",
+            bytes.len()
+        ));
+    }
+
+    let mut positions = Vec::with_capacity(triangle_count * 3);
+    let mut normals = Vec::with_capacity(triangle_count * 3);
+    let mut uvs = Vec::with_capacity(triangle_count * 3);
+    let mut offset = 84;
+
+    for _ in 0..triangle_count {
+        let normal = convert_vector(read_vec3(&bytes, offset));
+        offset += 12;
+
+        let mut triangle = [Vec3::ZERO; 3];
+        for vertex in &mut triangle {
+            *vertex = convert_point(read_vec3(&bytes, offset));
+            offset += 12;
+        }
+        offset += 2;
+
+        let normal = normal.try_normalize().unwrap_or_else(|| {
+            (triangle[1] - triangle[0])
+                .cross(triangle[2] - triangle[0])
+                .normalize_or_zero()
+        });
+
+        positions.extend(triangle.map(|vertex| vertex.to_array()));
+        normals.extend([normal.to_array(); 3]);
+        uvs.extend([[0.0, 0.0]; 3]);
+    }
+
+    let mut mesh = Mesh::new(
+        PrimitiveTopology::TriangleList,
+        RenderAssetUsages::RENDER_WORLD,
+    );
+    mesh.insert_attribute(Mesh::ATTRIBUTE_POSITION, positions);
+    mesh.insert_attribute(Mesh::ATTRIBUTE_NORMAL, normals);
+    mesh.insert_attribute(Mesh::ATTRIBUTE_UV_0, uvs);
+    Ok(mesh)
+}
+
+fn read_vec3(bytes: &[u8], offset: usize) -> [f32; 3] {
+    [
+        read_f32(bytes, offset),
+        read_f32(bytes, offset + 4),
+        read_f32(bytes, offset + 8),
+    ]
+}
+
+fn read_f32(bytes: &[u8], offset: usize) -> f32 {
+    f32::from_le_bytes(
+        bytes[offset..offset + 4]
+            .try_into()
+            .expect("slice has length 4"),
+    )
+}
+
 fn transform_from_isometry(isometry: nalgebra::Isometry3<f32>) -> Transform {
     Transform::from_translation(convert_point(isometry.translation.vector.into()))
         .with_rotation(convert_rotation(isometry.rotation))
+}
+
+fn transform_from_ground_projected_isometry(isometry: nalgebra::Isometry3<f32>) -> Transform {
+    let (_, _, yaw) = isometry.rotation.euler_angles();
+    let yaw_only = nalgebra::UnitQuaternion::from_euler_angles(0.0, 0.0, yaw);
+    Transform::from_translation(convert_point(isometry.translation.vector.into()))
+        .with_rotation(convert_rotation(yaw_only))
 }
 
 fn convert_rotation(rotation: nalgebra::UnitQuaternion<f32>) -> Quat {
@@ -913,4 +1378,8 @@ fn convert_rotation(rotation: nalgebra::UnitQuaternion<f32>) -> Quat {
 
 fn convert_point([x, y, z]: [f32; 3]) -> Vec3 {
     Vec3::new(x, z, -y)
+}
+
+fn convert_vector(vector: [f32; 3]) -> Vec3 {
+    convert_point(vector)
 }

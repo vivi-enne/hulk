@@ -204,7 +204,9 @@ pub struct SolveSample {
     pub replay_seconds: f64,
     pub graph_seconds: f64,
     pub solve_duration: Duration,
+    pub raw_robot_to_field: linear_algebra::Isometry3<Robot, Field, f64>,
     pub robot_to_field: linear_algebra::Isometry3<Robot, Field, f64>,
+    pub reused_previous_pose: bool,
     pub diagnostics: Option<BackendSolveDiagnostics>,
     pub stats: ReplayStats,
 }
@@ -971,7 +973,9 @@ fn solve_and_record(
     let Some(result) = frontend.last_optimization_result() else {
         return Ok(());
     };
+    let raw_robot_to_field = result.transform;
     let mut robot_to_field = result.transform;
+    let mut reused_previous_pose = false;
     if should_reject_unanchored_pose_update(
         visual_anchor_pose_gate(parameters),
         last_accepted_robot_to_field.as_ref(),
@@ -981,6 +985,7 @@ fn solve_and_record(
     ) {
         if let Some(previous_robot_to_field) = last_accepted_robot_to_field {
             robot_to_field = *previous_robot_to_field;
+            reused_previous_pose = true;
             stats.pose_updates_reused_unanchored += 1;
         }
     } else {
@@ -991,7 +996,9 @@ fn solve_and_record(
         replay_seconds: recording.seconds_since_log_start(replay_time),
         graph_seconds: seconds_since(result.time, recording.graph_start_time(timestamp_mode)),
         solve_duration,
+        raw_robot_to_field: raw_robot_to_field.framed_transform(),
         robot_to_field: robot_to_field.framed_transform(),
+        reused_previous_pose,
         diagnostics: backend.compute_last_solve_diagnostics(),
         stats: stats.clone(),
     });
@@ -1109,12 +1116,15 @@ mod tests {
     }
 
     fn solve_sample_at(graph_seconds: f64) -> SolveSample {
+        let robot_to_field =
+            nalgebra::Isometry3::translation(graph_seconds, 0.0, 0.0).framed_transform();
         SolveSample {
             replay_seconds: graph_seconds,
             graph_seconds,
             solve_duration: Duration::ZERO,
-            robot_to_field: nalgebra::Isometry3::translation(graph_seconds, 0.0, 0.0)
-                .framed_transform(),
+            raw_robot_to_field: robot_to_field,
+            robot_to_field,
+            reused_previous_pose: false,
             diagnostics: None,
             stats: ReplayStats::default(),
         }

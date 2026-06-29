@@ -353,6 +353,14 @@ impl Recording {
         self.start_display_time() + Duration::from_secs_f64(seconds.max(0.0))
     }
 
+    pub fn topic_message_count(&self, topic: &str) -> usize {
+        self.topic_counts.get(topic).copied().unwrap_or_default()
+    }
+
+    pub fn log_time_at_seconds(&self, seconds: f64) -> SystemTime {
+        self.start_log_time() + Duration::from_secs_f64(seconds.max(0.0))
+    }
+
     pub fn seconds_since_start(&self, time: SystemTime) -> f64 {
         self.seconds_since_display_start(time)
     }
@@ -448,6 +456,16 @@ impl Recording {
             .map(|event| &event.kind)
         {
             snapshot.recorded_localization = *localization;
+        }
+        if let Some(EventKind::RobotKinematics(robot_kinematics)) = self
+            .snapshot_index
+            .nearest_robot_kinematics(&self.events, visual_time)
+            .map(|event| &event.kind)
+        {
+            snapshot.robot_kinematics = Some(TimeWrapper {
+                time: robot_kinematics.time,
+                inner: Arc::new(robot_kinematics.inner.clone()),
+            });
         }
         if let Some(event) = self
             .snapshot_index
@@ -818,6 +836,7 @@ struct SnapshotIndex {
     camera_matrices: Vec<usize>,
     detected_objects: Vec<usize>,
     recorded_localizations: Vec<usize>,
+    robot_kinematics: Vec<usize>,
     calibrated_intrinsics: Vec<usize>,
     field_mark_associations: Vec<usize>,
     global_localization_debug: Vec<usize>,
@@ -834,6 +853,7 @@ impl SnapshotIndex {
                 EventKind::RecordedLocalization(_) => {
                     index.recorded_localizations.push(event_index)
                 }
+                EventKind::RobotKinematics(_) => index.robot_kinematics.push(event_index),
                 EventKind::CalibratedIntrinsics(_) => index.calibrated_intrinsics.push(event_index),
                 EventKind::FieldMarkAssociations(_) => {
                     index.field_mark_associations.push(event_index)
@@ -842,9 +862,7 @@ impl SnapshotIndex {
                     index.global_localization_debug.push(event_index)
                 }
                 EventKind::SolveDiagnostics(_) => index.solve_diagnostics.push(event_index),
-                EventKind::Imu(_)
-                | EventKind::VisualOdometry(_)
-                | EventKind::RobotKinematics(_) => {}
+                EventKind::Imu(_) | EventKind::VisualOdometry(_) => {}
             }
         }
         index.sort_by_display_time(events);
@@ -899,6 +917,19 @@ impl SnapshotIndex {
         Self::latest_with_max(
             events,
             &self.recorded_localizations,
+            time,
+            SNAPSHOT_MAX_TIME_DISTANCE,
+        )
+    }
+
+    fn nearest_robot_kinematics<'a>(
+        &self,
+        events: &'a [RecordedEvent],
+        time: SystemTime,
+    ) -> Option<&'a RecordedEvent> {
+        Self::nearest_with_max(
+            events,
+            &self.robot_kinematics,
             time,
             SNAPSHOT_MAX_TIME_DISTANCE,
         )
@@ -1069,6 +1100,7 @@ pub struct RecordingSnapshot {
     pub detected_objects_time: Option<SystemTime>,
     pub detected_objects_frame: Option<DetectedObjectsFrame>,
     pub recorded_localization: Option<Isometry3<Field, Robot>>,
+    pub robot_kinematics: Option<TimeWrapper<Arc<RobotKinematics>>>,
     pub calibrated_intrinsics: Option<Intrinsic>,
     pub calibrated_intrinsics_time: Option<SystemTime>,
     pub field_mark_associations: Option<TimeWrapper<FieldMarkAssociations>>,

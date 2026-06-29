@@ -39,11 +39,15 @@ use types::{
 use crate::{
     mcap_recording::{
         CameraImage, Recording, SNAPSHOT_MAX_TIME_DISTANCE, StereoFrame, StereoImageId,
-        TRAJECTORY_MAX_SAMPLE_GAP_SECONDS, TrajectoryPoint, nanos_since_epoch,
+        TOPIC_ROBOT_KINEMATICS, TRAJECTORY_MAX_SAMPLE_GAP_SECONDS, TrajectoryPoint,
+        nanos_since_epoch,
     },
     nearest_by_distance,
     replay::{ReplayParameters, ResolveMessage, ResolveProgress, ResolveResult, TimestampMode},
-    scene::{self, SceneCameraFrame, SceneCameraSide, SceneData, SceneFrameSequence, SceneVersion},
+    scene::{
+        self, SceneCameraFrame, SceneCameraSide, SceneData, SceneFrameSequence,
+        SceneTrajectoryTrace, SceneVersion,
+    },
 };
 
 pub struct LocalizationMcapVisualizerApp {
@@ -67,9 +71,17 @@ pub struct LocalizationMcapVisualizerApp {
     camera_matrix_key: Option<CameraMatrixKey>,
     camera_version: SceneVersion,
     global_debug_cache: CachedGlobalDebug,
+    use_global_debug_pose_in_3d: bool,
+    project_robot_marker_to_ground: bool,
     show_top_down_path: bool,
+    show_recorded_trajectory: bool,
+    last_sent_show_recorded_trajectory: bool,
     show_vo_only: bool,
     last_sent_show_vo_only: bool,
+    keep_trace_history: bool,
+    show_trace_history: bool,
+    trace_history: Vec<PathTrace>,
+    trace_history_version: SceneVersion,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -86,6 +98,13 @@ enum ComponentPreset {
     VisualOdometryAndImu,
     VisualOdometryAndFootHeights,
     VisualOdometryAndVisual,
+}
+
+#[derive(Clone, Debug)]
+struct PathTrace {
+    label: String,
+    trajectory: Vec<TrajectoryPoint>,
+    color: Color32,
 }
 
 impl LocalizationMcapVisualizerApp {
@@ -126,9 +145,17 @@ impl LocalizationMcapVisualizerApp {
             camera_matrix_key: None,
             camera_version: SceneVersion::default(),
             global_debug_cache: CachedGlobalDebug::default(),
+            use_global_debug_pose_in_3d: false,
+            project_robot_marker_to_ground: true,
             show_top_down_path: true,
+            show_recorded_trajectory: true,
+            last_sent_show_recorded_trajectory: true,
             show_vo_only: false,
             last_sent_show_vo_only: false,
+            keep_trace_history: true,
+            show_trace_history: true,
+            trace_history: Vec::new(),
+            trace_history_version: SceneVersion::default(),
         })
     }
 }
@@ -175,18 +202,32 @@ impl App for LocalizationMcapVisualizerApp {
             debug_pose,
             &snapshot.detected_objects,
         );
-        let scene_pose = global_debug
-            .as_deref()
-            .map(|debug| debug.robot_to_field.inner.cast().framed_transform())
-            .unwrap_or(current_pose);
         let camera_matrix_for_ui = camera_matrix.clone();
-        self.update_scene_data(camera_matrix.take(), scene_pose, global_debug.clone());
+        let scene_pose = if self.use_global_debug_pose_in_3d {
+            global_debug
+                .as_deref()
+                .map(|debug| debug.robot_to_field.inner.cast().framed_transform())
+                .unwrap_or(current_pose)
+        } else {
+            current_pose
+        };
+        self.update_scene_data(
+            camera_matrix.take(),
+            scene_pose,
+            snapshot
+                .robot_kinematics
+                .as_ref()
+                .map(|robot_kinematics| robot_kinematics.inner.clone()),
+            global_debug.clone(),
+        );
 
         let position_before_ui = self.position_seconds;
         let selected_camera_before_ui = self.selected_camera;
         let parameters_before_ui = self.parameters.clone();
         let resolve_version_before_ui = self.resolve_version;
         let playing_before_ui = self.playing;
+        let use_global_debug_pose_before_ui = self.use_global_debug_pose_in_3d;
+        let project_robot_marker_before_ui = self.project_robot_marker_to_ground;
 
         self.header(context);
         self.parameters_panel(context, snapshot.solve_diagnostics.as_ref());
@@ -208,7 +249,9 @@ impl App for LocalizationMcapVisualizerApp {
             || self.selected_camera != selected_camera_before_ui
             || self.parameters != parameters_before_ui
             || self.resolve_version != resolve_version_before_ui
-            || self.playing != playing_before_ui;
+            || self.playing != playing_before_ui
+            || self.use_global_debug_pose_in_3d != use_global_debug_pose_before_ui
+            || self.project_robot_marker_to_ground != project_robot_marker_before_ui;
         if self.playing
             || matches!(self.resolve, ResolveState::Running { .. })
             || ui_changed_scene_inputs
@@ -251,6 +294,9 @@ impl LocalizationMcapVisualizerApp {
         }
 
         if let Some(result) = finished {
+            if self.keep_trace_history {
+                self.add_trace_from_result(&result);
+            }
             self.resolve_version = self.resolve_version.next();
             self.resolve = ResolveState::Done(result);
         } else if let Some(error) = failed {
@@ -264,6 +310,7 @@ impl LocalizationMcapVisualizerApp {
         &mut self,
         camera_matrix: Option<CameraMatrix>,
         current_pose: linear_algebra::Isometry3<Robot, Field, f64>,
+        robot_kinematics: Option<Arc<kinematics::robot_kinematics::RobotKinematics>>,
         global_debug: Option<Arc<GlobalLocalizationDetailedDebug>>,
     ) {
         let selected_frame_sequence = self.selected_scene_frame_sequence();
@@ -273,6 +320,7 @@ impl LocalizationMcapVisualizerApp {
             camera_version,
             recorded_trajectory_version,
             resolved_trajectory_version,
+            trace_trajectories_version,
             global_debug_version,
         ) = {
             let scene_data = self.widget.bevy_app.world_mut().resource::<SceneData>();
@@ -282,6 +330,7 @@ impl LocalizationMcapVisualizerApp {
                 scene_data.camera_version(),
                 scene_data.recorded_trajectory_version(),
                 scene_data.resolved_trajectory_version(),
+                scene_data.trace_trajectories_version(),
                 scene_data.global_debug_version(),
             )
         };
@@ -295,10 +344,11 @@ impl LocalizationMcapVisualizerApp {
         } else {
             None
         };
-        let trajectory_mode_changed = self.last_sent_show_vo_only != self.show_vo_only;
+        let trajectory_mode_changed = self.last_sent_show_vo_only != self.show_vo_only
+            || self.last_sent_show_recorded_trajectory != self.show_recorded_trajectory;
         let next_recorded_trajectory =
             if recorded_trajectory_version != SceneVersion::READY || trajectory_mode_changed {
-                Some(if self.show_vo_only {
+                Some(if self.show_vo_only || !self.show_recorded_trajectory {
                     Vec::new()
                 } else {
                     self.recorded_trajectory.clone()
@@ -316,12 +366,21 @@ impl LocalizationMcapVisualizerApp {
             } else {
                 None
             };
+        let next_trace_trajectories = if trace_trajectories_version != self.trace_history_version
+            || trajectory_mode_changed
+        {
+            Some(self.scene_trace_trajectories())
+        } else {
+            None
+        };
 
         let mut scene_data = self.widget.bevy_app.world_mut().resource_mut::<SceneData>();
         if let Some(field_dimensions) = next_field_dimensions {
             scene_data.set_field_dimensions(field_dimensions);
         }
         scene_data.set_current_robot_to_field(Some(current_pose.inner.cast().framed_transform()));
+        scene_data.set_project_robot_marker_to_ground(self.project_robot_marker_to_ground);
+        scene_data.set_robot_kinematics(robot_kinematics);
 
         if camera_version != self.camera_version {
             scene_data.set_camera_matrix(camera_matrix);
@@ -335,9 +394,13 @@ impl LocalizationMcapVisualizerApp {
         if let Some(resolved_trajectory) = next_resolved_trajectory {
             scene_data.set_resolved_trajectory(resolved_trajectory);
         }
+        if let Some(trace_trajectories) = next_trace_trajectories {
+            scene_data.set_trace_trajectories(trace_trajectories);
+        }
         if global_debug_version != self.global_debug_cache.version {
             scene_data.set_global_debug(global_debug);
         }
+        self.last_sent_show_recorded_trajectory = self.show_recorded_trajectory;
         self.last_sent_show_vo_only = self.show_vo_only;
     }
 
@@ -490,6 +553,19 @@ impl LocalizationMcapVisualizerApp {
         })
     }
 
+    fn scene_trace_trajectories(&self) -> Vec<SceneTrajectoryTrace> {
+        if !self.show_trace_history {
+            return Vec::new();
+        }
+        self.trace_history
+            .iter()
+            .map(|trace| SceneTrajectoryTrace {
+                trajectory: trace.trajectory.clone(),
+                color: color32_to_linear_rgba(trace.color),
+            })
+            .collect()
+    }
+
     fn initial_robot_to_field(&self) -> linear_algebra::Isometry3<Robot, Field, f64> {
         initial_robot_to_field_from_camera_matrix(&self.recording.first_camera_matrix)
     }
@@ -579,6 +655,12 @@ impl LocalizationMcapVisualizerApp {
                 } else {
                     "field: SPL_2025 fallback"
                 });
+                let robot_kinematics_count =
+                    self.recording.topic_message_count(TOPIC_ROBOT_KINEMATICS);
+                if robot_kinematics_count > 0 {
+                    ui.separator();
+                    ui.label(format!("robot kinematics: {robot_kinematics_count}"));
+                }
                 if let Some(result) = self.resolved_result() {
                     ui.separator();
                     ui.colored_label(
@@ -1063,6 +1145,25 @@ impl LocalizationMcapVisualizerApp {
         self.parameters.pose_hint.enabled = pose_hint_enabled;
     }
 
+    fn add_trace_from_result(&mut self, result: &ResolveResult) {
+        let trajectory = if self.show_vo_only {
+            result.vo_trajectory.clone()
+        } else {
+            result.trajectory()
+        };
+        if trajectory.len() < 2 {
+            return;
+        }
+
+        let color = trace_color(self.trace_history.len());
+        self.trace_history.push(PathTrace {
+            label: component_trace_label(&result.parameters, self.show_vo_only),
+            trajectory,
+            color,
+        });
+        self.trace_history_version = self.trace_history_version.next();
+    }
+
     fn resolve_controls(&mut self, ui: &mut Ui) {
         match &mut self.resolve {
             ResolveState::Running {
@@ -1118,6 +1219,43 @@ impl LocalizationMcapVisualizerApp {
                         self.resolve_version = self.resolve_version.next();
                     }
                 }
+                ui.horizontal_wrapped(|ui| {
+                    ui.checkbox(
+                        &mut self.use_global_debug_pose_in_3d,
+                        "use global pose in 3D",
+                    );
+                    ui.checkbox(
+                        &mut self.project_robot_marker_to_ground,
+                        "ground-yaw robot marker",
+                    );
+                    let recorded_changed = ui
+                        .checkbox(&mut self.show_recorded_trajectory, "show recorded path")
+                        .changed();
+                    if recorded_changed {
+                        self.resolve_version = self.resolve_version.next();
+                    }
+                    ui.checkbox(&mut self.keep_trace_history, "keep displayed paths");
+                    let show_changed = ui
+                        .checkbox(&mut self.show_trace_history, "show kept paths")
+                        .changed();
+                    if show_changed {
+                        self.trace_history_version = self.trace_history_version.next();
+                    }
+                    if ui.button("Pin displayed path").clicked() {
+                        if let Some(result) = self.resolved_result().cloned() {
+                            self.add_trace_from_result(&result);
+                        }
+                    }
+                    if ui.button("Clear paths").clicked() {
+                        self.trace_history.clear();
+                        self.trace_history_version = self.trace_history_version.next();
+                    }
+                    if ui.button("Print solver samples").clicked() {
+                        if let Some(result) = self.resolved_result() {
+                            print_solver_samples(result);
+                        }
+                    }
+                });
                 if let ResolveState::Failed(error) = &self.resolve {
                     ui.colored_label(Color32::LIGHT_RED, error);
                 }
@@ -1242,6 +1380,13 @@ impl LocalizationMcapVisualizerApp {
             result.parameters.include_imu && result.parameters.include_imu_kinematics,
             result.parameters.include_foot_heights,
         ));
+        if self.show_trace_history && !self.trace_history.is_empty() {
+            ui.separator();
+            ui.label(RichText::new("Kept paths").strong());
+            for trace in &self.trace_history {
+                ui.colored_label(trace.color, &trace.label);
+            }
+        }
     }
 
     fn camera_panel(
@@ -1555,6 +1700,12 @@ impl LocalizationMcapVisualizerApp {
         dimensions: &FieldDimensions,
         seconds: f64,
     ) {
+        if self.show_trace_history {
+            for trace in &self.trace_history {
+                self.draw_top_down_trace(painter, field_rect, dimensions, seconds, trace);
+            }
+        }
+
         if let Some(trajectory) = self.active_resolved_trajectory() {
             for window in trajectory
                 .iter()
@@ -1586,6 +1737,32 @@ impl LocalizationMcapVisualizerApp {
                     &window[1].robot_to_field,
                 );
             }
+        }
+    }
+
+    fn draw_top_down_trace(
+        &self,
+        painter: &egui::Painter,
+        field_rect: Rect,
+        dimensions: &FieldDimensions,
+        seconds: f64,
+        trace: &PathTrace,
+    ) {
+        for window in trace
+            .trajectory
+            .iter()
+            .take_while(|point| point.seconds <= seconds)
+            .collect::<Vec<_>>()
+            .windows(2)
+        {
+            draw_top_down_trajectory_segment_with_color(
+                painter,
+                field_rect,
+                dimensions,
+                &window[0].robot_to_field,
+                &window[1].robot_to_field,
+                trace.color,
+            );
         }
     }
 
@@ -1806,6 +1983,161 @@ fn recorded_solve_diagnostics_summary(ui: &mut Ui, diagnostics: &SolveDiagnostic
         "recorded GP RMS mean/max: {:.3} / {:.3}",
         diagnostics.gaussian_process_prior.mean_rms, diagnostics.gaussian_process_prior.max_rms
     ));
+}
+
+fn component_trace_label(parameters: &ReplayParameters, raw_vo: bool) -> String {
+    if raw_vo {
+        return "raw VO".to_string();
+    }
+
+    let mut parts = Vec::new();
+    if parameters.include_visual_odometry {
+        parts.push("VO".to_string());
+    }
+    if parameters.include_global_features {
+        parts.push(if parameters.pose_hint.enabled {
+            "visual+hint".to_string()
+        } else {
+            "global".to_string()
+        });
+    }
+    if parameters.include_imu {
+        let mut imu = Vec::new();
+        if parameters.include_imu_roll_pitch {
+            imu.push("rp");
+        }
+        if parameters.include_imu_yaw {
+            imu.push("yaw");
+        }
+        if parameters.include_current_spline_orientation {
+            imu.push("cur");
+        }
+        if parameters.include_imu_kinematics {
+            imu.push("kin");
+        }
+        if !imu.is_empty() {
+            parts.push(format!("IMU[{}]", imu.join(",")));
+        }
+    }
+    if parameters.include_foot_heights {
+        parts.push("foot".to_string());
+    }
+
+    if parts.is_empty() {
+        "prior only".to_string()
+    } else {
+        parts.join(" + ")
+    }
+}
+
+fn print_solver_samples(result: &ResolveResult) {
+    println!(
+        "localization_mcap_visualizer solver samples: {} samples, components: {}",
+        result.samples.len(),
+        component_trace_label(&result.parameters, false)
+    );
+    println!(
+        "replay_s,graph_s,raw_x,raw_y,raw_z,raw_yaw,shown_x,shown_y,shown_z,shown_yaw,raw_dxy,raw_dyaw,shown_dxy,shown_dyaw,reused_previous,status,total_error,vo_rms,visual_rms,gp_rms"
+    );
+
+    let mut previous_raw = None;
+    let mut previous_shown = None;
+    for sample in &result.samples {
+        let raw = pose_xy_z_yaw(&sample.raw_robot_to_field);
+        let shown = pose_xy_z_yaw(&sample.robot_to_field);
+        let raw_delta = previous_raw
+            .map(|previous| pose_delta(previous, raw))
+            .unwrap_or((0.0, 0.0));
+        let shown_delta = previous_shown
+            .map(|previous| pose_delta(previous, shown))
+            .unwrap_or((0.0, 0.0));
+        previous_raw = Some(raw);
+        previous_shown = Some(shown);
+
+        let diagnostics = sample.diagnostics.as_ref();
+        let status = diagnostics
+            .map(|diagnostics| format!("{:?}", diagnostics.optimizer_status))
+            .unwrap_or_else(|| "None".to_string());
+        let total_error = diagnostics.map_or(0.0, |diagnostics| diagnostics.total_error);
+        let vo_rms = diagnostics.map_or(0.0, |diagnostics| diagnostics.visual_odometry.mean_rms);
+        let visual_rms =
+            diagnostics.map_or(0.0, |diagnostics| diagnostics.visual_reprojection.mean_rms);
+        let gp_rms = diagnostics.map_or(0.0, |diagnostics| {
+            diagnostics.gaussian_process_prior.mean_rms
+        });
+
+        println!(
+            "{:.3},{:.3},{:.4},{:.4},{:.4},{:.4},{:.4},{:.4},{:.4},{:.4},{:.4},{:.4},{:.4},{:.4},{},{},{:.6},{:.6},{:.6},{:.6}",
+            sample.replay_seconds,
+            sample.graph_seconds,
+            raw.0,
+            raw.1,
+            raw.2,
+            raw.3,
+            shown.0,
+            shown.1,
+            shown.2,
+            shown.3,
+            raw_delta.0,
+            raw_delta.1,
+            shown_delta.0,
+            shown_delta.1,
+            sample.reused_previous_pose,
+            status,
+            total_error,
+            vo_rms,
+            visual_rms,
+            gp_rms,
+        );
+    }
+}
+
+fn pose_xy_z_yaw(pose: &linear_algebra::Isometry3<Robot, Field, f64>) -> (f64, f64, f64, f64) {
+    let translation = pose.inner.translation.vector;
+    let (_, _, yaw) = pose.inner.rotation.euler_angles();
+    (translation.x, translation.y, translation.z, yaw)
+}
+
+fn pose_delta(previous: (f64, f64, f64, f64), current: (f64, f64, f64, f64)) -> (f64, f64) {
+    let dxy = ((current.0 - previous.0).powi(2) + (current.1 - previous.1).powi(2)).sqrt();
+    let dyaw = shortest_angle_distance(previous.3, current.3).abs();
+    (dxy, dyaw)
+}
+
+fn shortest_angle_distance(from: f64, to: f64) -> f64 {
+    let mut delta = to - from;
+    while delta > std::f64::consts::PI {
+        delta -= 2.0 * std::f64::consts::PI;
+    }
+    while delta < -std::f64::consts::PI {
+        delta += 2.0 * std::f64::consts::PI;
+    }
+    delta
+}
+
+fn trace_color(index: usize) -> Color32 {
+    const COLORS: [Color32; 10] = [
+        Color32::from_rgb(255, 205, 86),
+        Color32::from_rgb(54, 162, 235),
+        Color32::from_rgb(255, 99, 132),
+        Color32::from_rgb(75, 192, 120),
+        Color32::from_rgb(200, 132, 255),
+        Color32::from_rgb(255, 159, 64),
+        Color32::from_rgb(96, 225, 210),
+        Color32::from_rgb(230, 230, 85),
+        Color32::from_rgb(170, 210, 255),
+        Color32::from_rgb(255, 145, 220),
+    ];
+    COLORS[index % COLORS.len()]
+}
+
+fn color32_to_linear_rgba(color: Color32) -> [f32; 4] {
+    [
+        f32::from(color.r()) / 255.0,
+        f32::from(color.g()) / 255.0,
+        f32::from(color.b()) / 255.0,
+        (f32::from(color.a()) / 255.0).max(0.65),
+    ]
 }
 
 fn draw_detected_objects(
@@ -2206,6 +2538,24 @@ fn draw_top_down_trajectory_segment(
     start: &linear_algebra::Isometry3<Robot, Field, f64>,
     end: &linear_algebra::Isometry3<Robot, Field, f64>,
 ) {
+    draw_top_down_trajectory_segment_with_color(
+        painter,
+        field_rect,
+        dimensions,
+        start,
+        end,
+        Color32::from_rgb(82, 170, 255).gamma_multiply(0.55),
+    );
+}
+
+fn draw_top_down_trajectory_segment_with_color(
+    painter: &egui::Painter,
+    field_rect: Rect,
+    dimensions: &FieldDimensions,
+    start: &linear_algebra::Isometry3<Robot, Field, f64>,
+    end: &linear_algebra::Isometry3<Robot, Field, f64>,
+    color: Color32,
+) {
     let start = start.inner.translation.vector;
     let end = end.inner.translation.vector;
     if !start.x.is_finite() || !start.y.is_finite() || !end.x.is_finite() || !end.y.is_finite() {
@@ -2216,7 +2566,7 @@ fn draw_top_down_trajectory_segment(
             field_to_screen(field_rect, dimensions, start.x as f32, start.y as f32),
             field_to_screen(field_rect, dimensions, end.x as f32, end.y as f32),
         ],
-        Stroke::new(1.5, Color32::from_rgb(82, 170, 255).gamma_multiply(0.55)),
+        Stroke::new(1.5, color),
     );
 }
 
