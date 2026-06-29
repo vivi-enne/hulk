@@ -40,12 +40,12 @@ pub const TOPIC_ROBOT_KINEMATICS: &str = "robot_kinematics";
 pub const TOPIC_CAMERA_MATRIX: &str = "camera_matrix";
 pub const TOPIC_DETECTED_OBJECTS: &str = "detected_objects";
 pub const TOPIC_DETECTED_OBJECTS_ANNOUNCE: &str = "detected_objects/announce";
+pub const TOPIC_FIELD_MARK_ASSOCIATIONS: &str = "field_mark_association/associations";
 pub const TOPIC_FIELD_DIMENSIONS: &str = "field_dimensions";
 pub const TOPIC_LOCALIZATION: &str = "localization";
 pub const TOPIC_VISUAL_ODOMETRY: &str =
     "visual_odometry/current_left_camera_to_previous_left_camera";
 pub const TOPIC_CALIBRATED_INTRINSICS: &str = "debug/calibrated_intrinsics";
-pub const TOPIC_FIELD_MARK_ASSOCIATIONS: &str = "field_mark_association/associations";
 pub const TOPIC_GLOBAL_LOCALIZATION_DEBUG: &str = "debug/global_localization";
 pub const TOPIC_SOLVE_DIAGNOSTICS: &str = "debug/solve_diagnostics";
 
@@ -77,6 +77,7 @@ impl Recording {
         let mut field_dimensions = None;
         let mut topic_counts = BTreeMap::new();
         let mut detected_object_announcements = BTreeMap::new();
+        let mut field_mark_associations = Vec::new();
 
         for (order, message) in
             MessageStream::new_with_options(&bytes, enum_set!(Options::IgnoreEndMagic))
@@ -133,6 +134,22 @@ impl Recording {
                         .insert(announcement.sequence_number, (announcement.time, log_time));
                     None
                 }
+                TOPIC_FIELD_MARK_ASSOCIATIONS => {
+                    let source_time = decode_time_prefix(&message.data).wrap_err_with(|| {
+                        format!(
+                            "failed to decode {TOPIC_FIELD_MARK_ASSOCIATIONS} time prefix order {order} sequence {}",
+                            message.sequence
+                        )
+                    })?;
+                    field_mark_associations.push(FieldMarkAssociationTiming {
+                        order,
+                        log_time,
+                        source_time,
+                    });
+                    Some(EventKind::FieldMarkAssociations(decode_recorded_message(
+                        &message,
+                    )?))
+                }
                 TOPIC_FIELD_DIMENSIONS => {
                     let dimensions = decode_recorded_message(&message)?;
                     field_dimensions = Some(dimensions);
@@ -142,9 +159,6 @@ impl Recording {
                     decode_recorded_message(&message)?,
                 )),
                 TOPIC_CALIBRATED_INTRINSICS => Some(EventKind::CalibratedIntrinsics(
-                    decode_recorded_message(&message)?,
-                )),
-                TOPIC_FIELD_MARK_ASSOCIATIONS => Some(EventKind::FieldMarkAssociations(
                     decode_recorded_message(&message)?,
                 )),
                 TOPIC_GLOBAL_LOCALIZATION_DEBUG => Some(EventKind::GlobalLocalizationDebug(
@@ -183,29 +197,44 @@ impl Recording {
             }
         }
 
+        events.sort_by_key(|event| (nanos_since_epoch(event.log_time), event.order));
+        images.sort_by_key(|image| (image.embedded_time.as_nanos(), image.order));
+        field_mark_associations.sort_by_key(|association| {
+            (nanos_since_epoch(association.log_time), association.order)
+        });
+        let mut images_by_embedded_time = (0..images.len()).collect::<Vec<_>>();
+        images_by_embedded_time
+            .sort_by_key(|&index| (images[index].embedded_time.as_nanos(), images[index].order));
+        let mut detected_objects_image_sources = detected_object_announcements;
+        for (sequence, time) in index_detected_objects_sources_from_field_mark_associations(
+            &events,
+            &field_mark_associations,
+        ) {
+            detected_objects_image_sources
+                .entry(sequence)
+                .or_insert(time);
+        }
+        let detected_objects_by_image = index_detected_objects_by_image(
+            &events,
+            &images,
+            &images_by_embedded_time,
+            &detected_objects_image_sources,
+        );
+        let detected_objects_image_times = index_detected_objects_image_times(
+            &images,
+            &images_by_embedded_time,
+            &detected_objects_image_sources,
+        );
         for event in &mut events {
             if let EventKind::DetectedObjects(frame) = &mut event.kind
                 && let Some((image_time, announcement_log_time)) =
-                    detected_object_announcements.get(&frame.sequence_number)
+                    detected_objects_image_sources.get(&frame.sequence_number)
             {
                 frame.image_time = Some(*image_time);
                 frame.announcement_log_time = Some(*announcement_log_time);
             }
         }
-
-        events.sort_by_key(|event| (nanos_since_epoch(event.log_time), event.order));
         let snapshot_index = SnapshotIndex::new(&events);
-        images.sort_by_key(|image| (image.embedded_time.as_nanos(), image.order));
-        let mut images_by_embedded_time = (0..images.len()).collect::<Vec<_>>();
-        images_by_embedded_time
-            .sort_by_key(|&index| (images[index].embedded_time.as_nanos(), images[index].order));
-        let detected_objects_by_image =
-            index_detected_objects_by_image(&events, &images, &images_by_embedded_time);
-        let detected_objects_image_times = index_detected_objects_image_times(
-            &images,
-            &images_by_embedded_time,
-            &detected_object_announcements,
-        );
 
         Ok(Self {
             events,
@@ -586,11 +615,8 @@ fn index_detected_objects_image_times(
     announcements
         .iter()
         .filter_map(|(&sequence, &(source_time, _announcement_log_time))| {
-            let image_index = first_image_index_at_or_after_embedded_time(
-                images,
-                images_by_embedded_time,
-                source_time,
-            )?;
+            let image_index =
+                nearest_image_index_by_embedded_time(images, images_by_embedded_time, source_time)?;
             let image = images.get(image_index)?;
             Some((
                 sequence,
@@ -606,17 +632,40 @@ fn index_detected_objects_by_image(
     events: &[RecordedEvent],
     images: &[StereoImageIndex],
     images_by_embedded_time: &[usize],
+    announcements: &BTreeMap<i64, (Time, SystemTime)>,
 ) -> Vec<Option<usize>> {
     let mut by_image = vec![None; images.len()];
+    let mut fallback_image_index = 0;
+    let use_stream_order_fallback = announcements.is_empty();
 
     for (event_index, event) in events.iter().enumerate() {
         let EventKind::DetectedObjects(frame) = &event.kind else {
             continue;
         };
 
-        let image_index = frame.image_time.and_then(|time| {
-            first_image_index_at_or_after_embedded_time(images, images_by_embedded_time, time)
-        });
+        let image_index = announcements
+            .get(&frame.sequence_number)
+            .and_then(|time| {
+                nearest_image_index_by_embedded_time(images, images_by_embedded_time, time.0)
+            })
+            .or_else(|| {
+                frame.image_time.and_then(|time| {
+                    first_image_index_at_or_after_embedded_time(
+                        images,
+                        images_by_embedded_time,
+                        time,
+                    )
+                })
+            })
+            .or_else(|| {
+                use_stream_order_fallback
+                    .then(|| {
+                        let image_index = fallback_image_index;
+                        fallback_image_index += 1;
+                        (image_index < images.len()).then_some(image_index)
+                    })
+                    .flatten()
+            });
 
         if let Some(image_index) = image_index
             && let Some(slot) = by_image.get_mut(image_index)
@@ -626,6 +675,90 @@ fn index_detected_objects_by_image(
     }
 
     by_image
+}
+
+fn index_detected_objects_sources_from_field_mark_associations(
+    events: &[RecordedEvent],
+    field_mark_associations: &[FieldMarkAssociationTiming],
+) -> BTreeMap<i64, (Time, SystemTime)> {
+    let mut pending_detected_objects = Vec::new();
+    let mut sources = BTreeMap::new();
+    let mut event_index = 0;
+
+    for association in field_mark_associations {
+        while let Some(event) = events.get(event_index) {
+            if (nanos_since_epoch(event.log_time), event.order)
+                > (nanos_since_epoch(association.log_time), association.order)
+            {
+                break;
+            }
+
+            if let EventKind::DetectedObjects(frame) = &event.kind {
+                pending_detected_objects.push((frame.sequence_number, event.log_time));
+            }
+            event_index += 1;
+        }
+
+        let Some((pending_index, _)) = pending_detected_objects
+            .iter()
+            .enumerate()
+            .min_by_key(|(_, (_, log_time))| nanos_abs_diff(*log_time, association.log_time))
+        else {
+            continue;
+        };
+        let (sequence, _) = pending_detected_objects.remove(pending_index);
+        sources.insert(sequence, (association.source_time, association.log_time));
+    }
+
+    sources
+}
+
+fn nearest_image_index_by_embedded_time(
+    images: &[StereoImageIndex],
+    images_by_embedded_time: &[usize],
+    time: Time,
+) -> Option<usize> {
+    let target_nanos = time.as_nanos();
+    let next = images_by_embedded_time
+        .partition_point(|&index| images[index].embedded_time.as_nanos() <= target_nanos);
+    nearest_by_distance(
+        next.checked_sub(1)
+            .and_then(|index| images_by_embedded_time.get(index))
+            .copied()
+            .map(|index| {
+                (
+                    index,
+                    u128::from(
+                        images[index]
+                            .embedded_time
+                            .as_nanos()
+                            .abs_diff(target_nanos),
+                    ),
+                )
+            }),
+        images_by_embedded_time.get(next).copied().map(|index| {
+            (
+                index,
+                u128::from(
+                    images[index]
+                        .embedded_time
+                        .as_nanos()
+                        .abs_diff(target_nanos),
+                ),
+            )
+        }),
+    )
+    .filter(|&index| {
+        Duration::from_nanos(
+            u128::from(
+                images[index]
+                    .embedded_time
+                    .as_nanos()
+                    .abs_diff(target_nanos),
+            )
+            .min(u64::MAX as u128) as u64,
+        ) <= SNAPSHOT_MAX_TIME_DISTANCE
+    })
 }
 
 fn first_image_index_at_or_after_embedded_time(
@@ -672,6 +805,12 @@ impl RecordedEvent {
             | EventKind::GlobalLocalizationDebug(_) => self.publish_time,
         }
     }
+}
+
+struct FieldMarkAssociationTiming {
+    order: usize,
+    log_time: SystemTime,
+    source_time: Time,
 }
 
 #[derive(Default)]
@@ -1255,7 +1394,12 @@ mod tests {
         let images_by_embedded_time = vec![0, 1, 2];
         let events = vec![test_detected_objects_event(7, Some(Time::from_nanos(20)))];
 
-        let index = index_detected_objects_by_image(&events, &images, &images_by_embedded_time);
+        let index = index_detected_objects_by_image(
+            &events,
+            &images,
+            &images_by_embedded_time,
+            &BTreeMap::new(),
+        );
 
         assert_eq!(index, vec![None, Some(0), None]);
     }
@@ -1269,7 +1413,12 @@ mod tests {
             Some(Time::from_nanos(100_000_000)),
         )];
 
-        let index = index_detected_objects_by_image(&events, &images, &images_by_embedded_time);
+        let index = index_detected_objects_by_image(
+            &events,
+            &images,
+            &images_by_embedded_time,
+            &BTreeMap::new(),
+        );
 
         assert_eq!(index, vec![None, Some(0)]);
     }
@@ -1283,13 +1432,18 @@ mod tests {
             Some(Time::from_nanos(100_000_000)),
         )];
 
-        let index = index_detected_objects_by_image(&events, &images, &images_by_embedded_time);
+        let index = index_detected_objects_by_image(
+            &events,
+            &images,
+            &images_by_embedded_time,
+            &BTreeMap::new(),
+        );
 
         assert_eq!(index, vec![None, None]);
     }
 
     #[test]
-    fn detection_index_rejects_unannounced_detections() {
+    fn detection_index_uses_stream_order_without_timing_sources() {
         let images = vec![test_image(0, 10), test_image(1, 20)];
         let images_by_embedded_time = vec![0, 1];
         let events = vec![
@@ -1297,9 +1451,80 @@ mod tests {
             test_detected_objects_event(1, None),
         ];
 
-        let index = index_detected_objects_by_image(&events, &images, &images_by_embedded_time);
+        let index = index_detected_objects_by_image(
+            &events,
+            &images,
+            &images_by_embedded_time,
+            &BTreeMap::new(),
+        );
 
-        assert_eq!(index, vec![None, None]);
+        assert_eq!(index, vec![Some(0), Some(1)]);
+    }
+
+    #[test]
+    fn detection_index_skips_unmapped_detections_when_timing_sources_exist() {
+        let images = vec![test_image(0, 10), test_image(1, 20)];
+        let images_by_embedded_time = vec![0, 1];
+        let events = vec![
+            test_detected_objects_event(1, None),
+            test_detected_objects_event(2, None),
+        ];
+        let announcements = BTreeMap::from([(2, (Time::from_nanos(20), UNIX_EPOCH))]);
+
+        let index = index_detected_objects_by_image(
+            &events,
+            &images,
+            &images_by_embedded_time,
+            &announcements,
+        );
+
+        assert_eq!(index, vec![None, Some(1)]);
+    }
+
+    #[test]
+    fn detection_index_uses_field_mark_association_time_without_announcements() {
+        let images = vec![test_image(0, 10), test_image(1, 20), test_image(2, 30)];
+        let images_by_embedded_time = vec![0, 1, 2];
+        let events = vec![test_detected_objects_event_at(42, 19)];
+        let field_mark_associations = vec![test_field_mark_association_at(20, 21)];
+        let detected_objects_image_sources =
+            index_detected_objects_sources_from_field_mark_associations(
+                &events,
+                &field_mark_associations,
+            );
+
+        let index = index_detected_objects_by_image(
+            &events,
+            &images,
+            &images_by_embedded_time,
+            &detected_objects_image_sources,
+        );
+
+        assert_eq!(
+            detected_objects_image_sources.get(&42),
+            Some(&(Time::from_nanos(20), system_time_from_nanos(21)))
+        );
+        assert_eq!(index, vec![None, Some(0), None]);
+    }
+
+    #[test]
+    fn field_mark_association_time_matches_nearest_pending_detection() {
+        let events = vec![
+            test_detected_objects_event_at(10, 10),
+            test_detected_objects_event_at(20, 20),
+        ];
+        let field_mark_associations = vec![test_field_mark_association_at(20, 21)];
+
+        let sources = index_detected_objects_sources_from_field_mark_associations(
+            &events,
+            &field_mark_associations,
+        );
+
+        assert_eq!(
+            sources.get(&20),
+            Some(&(Time::from_nanos(20), system_time_from_nanos(21)))
+        );
+        assert!(!sources.contains_key(&10));
     }
 
     fn test_image(order: usize, embedded_nanos: i64) -> StereoImageIndex {
@@ -1325,6 +1550,32 @@ mod tests {
                 announcement_log_time: None,
                 sequence_number: sequence,
             }),
+        }
+    }
+
+    fn test_detected_objects_event_at(sequence: i64, log_nanos: i64) -> RecordedEvent {
+        RecordedEvent {
+            order: sequence as usize,
+            log_time: system_time_from_nanos(log_nanos as u64),
+            publish_time: system_time_from_nanos(log_nanos as u64),
+            kind: EventKind::DetectedObjects(DetectedObjectsFrame {
+                objects: Vec::new(),
+                image_time: None,
+                publish_time: system_time_from_nanos(log_nanos as u64),
+                announcement_log_time: None,
+                sequence_number: sequence,
+            }),
+        }
+    }
+
+    fn test_field_mark_association_at(
+        embedded_nanos: i64,
+        log_nanos: i64,
+    ) -> FieldMarkAssociationTiming {
+        FieldMarkAssociationTiming {
+            order: embedded_nanos as usize,
+            log_time: system_time_from_nanos(log_nanos as u64),
+            source_time: Time::from_nanos(embedded_nanos),
         }
     }
 }
