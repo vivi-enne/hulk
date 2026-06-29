@@ -475,7 +475,7 @@ mod tests {
     };
     use crate::{
         Error, RetentionPolicy, SampleMetadata, SubscriptionStatus, SubscriptionStatusSnapshot,
-        TopicSelector, subscription::SubscriptionState,
+        SubscriptionUpdateClosed, TopicSelector, subscription::SubscriptionState,
     };
 
     struct TestPayload;
@@ -551,15 +551,13 @@ mod tests {
             RetentionPolicy::LatestOnly,
         ));
         let handle = state.handle();
+        let mut updates = handle.subscribe_updates().unwrap();
         registry.register(&state);
         drop(state);
 
         registry.close_all();
 
         assert_eq!(handle.status().status(), &SubscriptionStatus::Closed);
-        assert!(matches!(
-            handle.drain_events().as_slice(),
-            [crate::DebugEvent::StatusChanged]
-        ));
+        assert!(matches!(updates.try_recv(), Err(SubscriptionUpdateClosed)));
     }
 }

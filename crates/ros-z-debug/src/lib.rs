@@ -51,5 +51,8 @@ pub use ros_z::dynamic::{
 };
 pub use sample::{SampleMetadata, SampleRecord};
 pub use status::{SubscriptionStatus, SubscriptionStatusSnapshot};
-pub use subscription::{JsonSubscriptionHandle, SubscriptionHandle};
+pub use subscription::{
+    JsonSubscriptionHandle, SubscriptionHandle, SubscriptionUpdate, SubscriptionUpdateClosed,
+    SubscriptionUpdateReceiver,
+};
 pub use topic::{ProjectedTopic, ProjectedTopicScope, TopicProjection, TopicSelector};
