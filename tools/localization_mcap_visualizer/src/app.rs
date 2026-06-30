@@ -88,6 +88,7 @@ enum ComponentPreset {
     Full,
     VisualOdometryOnly,
     GlobalFeaturesOnly,
+    PoseHintAssociationsOnly,
     VisualAssociationsOnly,
     ImuRollPitchOnly,
     ImuYawOnly,
@@ -827,6 +828,11 @@ impl LocalizationMcapVisualizerApp {
                             if ui.button("Global only").clicked() {
                                 self.apply_component_preset(ComponentPreset::GlobalFeaturesOnly);
                             }
+                            if ui.button("Local only").clicked() {
+                                self.apply_component_preset(
+                                    ComponentPreset::PoseHintAssociationsOnly,
+                                );
+                            }
                             if ui.button("Visual assoc").clicked() {
                                 self.apply_component_preset(
                                     ComponentPreset::VisualAssociationsOnly,
@@ -864,8 +870,12 @@ impl LocalizationMcapVisualizerApp {
                         ui.separator();
                         ui.checkbox(&mut self.parameters.include_visual_odometry, "include VO");
                         ui.checkbox(
-                            &mut self.parameters.include_global_features,
-                            "include global visual features",
+                            &mut self.parameters.include_global_association,
+                            "include global association",
+                        );
+                        ui.checkbox(
+                            &mut self.parameters.include_pose_hint_association,
+                            "include local reprojection association",
                         );
                         ui.checkbox(
                             &mut self.parameters.recompute_global_features,
@@ -1090,7 +1100,10 @@ impl LocalizationMcapVisualizerApp {
     fn apply_component_preset(&mut self, preset: ComponentPreset) {
         let pose_hint_enabled = matches!(
             preset,
-            ComponentPreset::Full | ComponentPreset::VisualAssociationsOnly
+            ComponentPreset::Full
+                | ComponentPreset::PoseHintAssociationsOnly
+                | ComponentPreset::VisualAssociationsOnly
+                | ComponentPreset::VisualOdometryAndVisual
         );
         self.parameters.include_visual_odometry = matches!(
             preset,
@@ -1100,10 +1113,17 @@ impl LocalizationMcapVisualizerApp {
                 | ComponentPreset::VisualOdometryAndFootHeights
                 | ComponentPreset::VisualOdometryAndVisual
         );
-        self.parameters.include_global_features = matches!(
+        self.parameters.include_global_association = matches!(
             preset,
             ComponentPreset::Full
                 | ComponentPreset::GlobalFeaturesOnly
+                | ComponentPreset::VisualAssociationsOnly
+                | ComponentPreset::VisualOdometryAndVisual
+        );
+        self.parameters.include_pose_hint_association = matches!(
+            preset,
+            ComponentPreset::Full
+                | ComponentPreset::PoseHintAssociationsOnly
                 | ComponentPreset::VisualAssociationsOnly
                 | ComponentPreset::VisualOdometryAndVisual
         );
@@ -1297,7 +1317,7 @@ impl LocalizationMcapVisualizerApp {
             stats.pose_updates_reused_unanchored
         ));
         ui.label(format!(
-            "Global: {} frames, {} candidates, {} ingested, {} associations",
+            "Visual assoc: {} frames, {} candidates, {} ingested, {} associations",
             stats.global_frames,
             stats.global_candidates,
             stats.global_frames_ingested,
@@ -1363,9 +1383,10 @@ impl LocalizationMcapVisualizerApp {
             result.parameters.visual_feature_noise_variance,
         ));
         ui.label(format!(
-            "components: VO={} visual={} pose-hint={} IMU[rp={}, yaw={}, kin={}] foot={}",
+            "components: VO={} global={} local={} pose-hint={} IMU[rp={}, yaw={}, kin={}] foot={}",
             result.parameters.include_visual_odometry,
-            result.parameters.include_global_features,
+            result.parameters.include_global_association,
+            result.parameters.include_pose_hint_association,
             result.parameters.pose_hint.enabled,
             result.parameters.include_imu && result.parameters.include_imu_roll_pitch,
             result.parameters.include_imu && result.parameters.include_imu_yaw,
@@ -1976,12 +1997,14 @@ fn component_trace_label(parameters: &ReplayParameters, raw_vo: bool) -> String 
     if parameters.include_visual_odometry {
         parts.push("VO".to_string());
     }
-    if parameters.include_global_features {
-        parts.push(if parameters.pose_hint.enabled {
-            "visual+hint".to_string()
-        } else {
-            "global".to_string()
-        });
+    match (
+        parameters.include_global_association,
+        parameters.include_pose_hint_association,
+    ) {
+        (true, true) => parts.push("global+local".to_string()),
+        (true, false) => parts.push("global".to_string()),
+        (false, true) => parts.push("local".to_string()),
+        (false, false) => {}
     }
     if parameters.include_imu {
         let mut imu = Vec::new();

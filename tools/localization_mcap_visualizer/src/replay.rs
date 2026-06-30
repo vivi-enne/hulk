@@ -11,8 +11,9 @@ use color_eyre::Result;
 use coordinate_systems::{Field, Robot};
 use field_mark_association::{
     FieldMarkAssociation, FieldMarkAssociationKind, FieldMarkAssociationParameters,
-    FieldMarkAssociationState, FieldMarkAssociations, GlobalLocalizationDebugStatus,
-    GlobalLocalizerParameters, PoseHintAssociationParameters, find_detected_visual_features,
+    FieldMarkAssociationSelection, FieldMarkAssociationState, FieldMarkAssociations,
+    GlobalLocalizationDebugStatus, GlobalLocalizerParameters, PoseHintAssociationParameters,
+    find_detected_visual_features,
 };
 use linear_algebra::IntoTransform;
 use localization_3d::{
@@ -61,7 +62,8 @@ pub struct ReplayParameters {
     pub max_visual_anchor_age: Duration,
     pub max_unanchored_translation_update: f32,
     pub max_unanchored_yaw_update: f32,
-    pub include_global_features: bool,
+    pub include_global_association: bool,
+    pub include_pose_hint_association: bool,
     pub include_imu: bool,
     pub include_imu_kinematics: bool,
     pub include_imu_roll_pitch: bool,
@@ -125,7 +127,8 @@ impl Default for ReplayParameters {
                 .max_unanchored_translation_update
                 as f32,
             max_unanchored_yaw_update: visual_anchor_pose_gate.max_unanchored_yaw_update as f32,
-            include_global_features: true,
+            include_global_association: true,
+            include_pose_hint_association: true,
             include_imu: true,
             include_imu_kinematics: true,
             include_imu_roll_pitch: true,
@@ -441,7 +444,9 @@ fn run_resolve(
                     stats.vo_received += 1;
                 }
                 EventKind::FieldMarkAssociations(associations)
-                    if parameters.include_global_features && !recompute_global_features =>
+                    if (parameters.include_global_association
+                        || parameters.include_pose_hint_association)
+                        && !recompute_global_features =>
                 {
                     if let Some(anchor_time) = ingest_recorded_field_mark_associations(
                         &mut frontend,
@@ -449,6 +454,10 @@ fn run_resolve(
                         associations,
                         parameters.timestamp_mode,
                         parameters.pose_hint_visual_min_features_per_frame,
+                        FieldMarkAssociationSelection {
+                            use_global_association: parameters.include_global_association,
+                            use_pose_hint_association: parameters.include_pose_hint_association,
+                        },
                         &mut stats,
                         &mut has_pending_measurements,
                     )? {
@@ -456,7 +465,9 @@ fn run_resolve(
                     }
                 }
                 EventKind::DetectedObjects(frame)
-                    if parameters.include_global_features && recompute_global_features =>
+                    if (parameters.include_global_association
+                        || parameters.include_pose_hint_association)
+                        && recompute_global_features =>
                 {
                     if let Some(anchor_time) = ingest_recomputed_global_features(
                         recording,
@@ -729,6 +740,7 @@ fn ingest_recorded_field_mark_associations(
     recorded_associations: &TimeWrapper<FieldMarkAssociations>,
     timestamp_mode: TimestampMode,
     pose_hint_visual_min_features_per_frame: usize,
+    selection: FieldMarkAssociationSelection,
     stats: &mut ReplayStats,
     has_pending_measurements: &mut bool,
 ) -> Result<Option<SystemTime>> {
@@ -736,6 +748,7 @@ fn ingest_recorded_field_mark_associations(
     let associations = localization_visual_associations(
         recorded_associations.inner.associations.clone(),
         pose_hint_visual_min_features_per_frame,
+        selection,
     );
     if associations.is_empty() {
         return Ok(None);
@@ -772,18 +785,29 @@ fn ingest_recorded_field_mark_associations(
 fn localization_visual_associations(
     associations: Vec<FieldMarkAssociation>,
     pose_hint_visual_min_features_per_frame: usize,
+    selection: FieldMarkAssociationSelection,
 ) -> Vec<FieldMarkAssociation> {
+    if !selection.use_global_association && !selection.use_pose_hint_association {
+        return Vec::new();
+    }
+
     let has_global_association = associations
         .iter()
         .any(|association| association.kind == FieldMarkAssociationKind::GlobalUnique);
-    if has_global_association {
+    if selection.use_global_association && has_global_association {
         return associations
             .into_iter()
             .filter(|association| association.kind == FieldMarkAssociationKind::GlobalUnique)
             .collect();
     }
-    if associations.len() >= pose_hint_visual_min_features_per_frame {
-        associations
+    let pose_hint_associations = associations
+        .into_iter()
+        .filter(|association| association.kind == FieldMarkAssociationKind::PoseHint)
+        .collect::<Vec<_>>();
+    if selection.use_pose_hint_association
+        && pose_hint_associations.len() >= pose_hint_visual_min_features_per_frame
+    {
+        pose_hint_associations
     } else {
         Vec::new()
     }
@@ -845,21 +869,31 @@ fn ingest_recomputed_global_features(
         field_dimensions,
         pose_hint,
         &association_parameters,
+        FieldMarkAssociationSelection {
+            use_global_association: parameters.include_global_association,
+            use_pose_hint_association: parameters.include_pose_hint_association,
+        },
         true,
     );
-    match localization.debug.as_ref().map(|debug| debug.status) {
-        None => stats.global_none += 1,
-        Some(GlobalLocalizationDebugStatus::Ambiguous) => stats.global_ambiguous += 1,
-        #[allow(deprecated)]
-        Some(GlobalLocalizationDebugStatus::Unique) => stats.global_unique_modulo_symmetry += 1,
-        Some(GlobalLocalizationDebugStatus::UniqueModuloSymmetry) => {
-            stats.global_unique_modulo_symmetry += 1;
+    if parameters.include_global_association {
+        match localization.debug.as_ref().map(|debug| debug.status) {
+            None => stats.global_none += 1,
+            Some(GlobalLocalizationDebugStatus::Ambiguous) => stats.global_ambiguous += 1,
+            #[allow(deprecated)]
+            Some(GlobalLocalizationDebugStatus::Unique) => stats.global_unique_modulo_symmetry += 1,
+            Some(GlobalLocalizationDebugStatus::UniqueModuloSymmetry) => {
+                stats.global_unique_modulo_symmetry += 1;
+            }
         }
     }
 
     let associations = localization_visual_associations(
         localization.associations,
         parameters.pose_hint_visual_min_features_per_frame,
+        FieldMarkAssociationSelection {
+            use_global_association: parameters.include_global_association,
+            use_pose_hint_association: parameters.include_pose_hint_association,
+        },
     );
     if !associations.is_empty() {
         stats.global_frames_ingested += 1;

@@ -41,6 +41,21 @@ pub struct FieldMarkAssociationParameters {
     pub pose_hint: PoseHintAssociationParameters,
 }
 
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub struct FieldMarkAssociationSelection {
+    pub use_global_association: bool,
+    pub use_pose_hint_association: bool,
+}
+
+impl Default for FieldMarkAssociationSelection {
+    fn default() -> Self {
+        Self {
+            use_global_association: true,
+            use_pose_hint_association: true,
+        }
+    }
+}
+
 impl Default for FieldMarkAssociationParameters {
     fn default() -> Self {
         Self {
@@ -236,6 +251,7 @@ pub async fn run(ctx: Arc<Context>) -> Result<()> {
                     &field_dimensions,
                     pose_hint,
                     &parameters,
+                    FieldMarkAssociationSelection::default(),
                     include_debug,
                 );
                 (state, localization)
@@ -280,6 +296,24 @@ pub fn associate_visual_features(
     pose_hint: Option<Isometry3<Robot, Field>>,
     parameters: &FieldMarkAssociationParameters,
 ) -> GlobalVisualLocalization {
+    associate_visual_features_selected(
+        visual_features,
+        camera_matrix,
+        field_dimensions,
+        pose_hint,
+        parameters,
+        FieldMarkAssociationSelection::default(),
+    )
+}
+
+pub fn associate_visual_features_selected(
+    visual_features: &DetectedVisualFeatures,
+    camera_matrix: &CameraMatrix,
+    field_dimensions: &FieldDimensions,
+    pose_hint: Option<Isometry3<Robot, Field>>,
+    parameters: &FieldMarkAssociationParameters,
+    selection: FieldMarkAssociationSelection,
+) -> GlobalVisualLocalization {
     let localizer = GlobalAssociator::new(parameters.global_localizer);
     let input = GlobalLocalizationInput {
         visual_features,
@@ -290,7 +324,12 @@ pub fn associate_visual_features(
         pose_hint,
     };
 
-    let pose_hint_result = localizer.associate_with_pose_hint(input.clone(), parameters.pose_hint);
+    let pose_hint_result = if selection.use_pose_hint_association {
+        localizer.associate_with_pose_hint(input.clone(), parameters.pose_hint)
+    } else {
+        PoseHintAssociationResult::default()
+    };
+
     if !pose_hint_result.associations.is_empty() {
         return GlobalVisualLocalization {
             debug: None,
@@ -298,16 +337,26 @@ pub fn associate_visual_features(
         };
     }
 
-    let result = localizer.localize(input);
+    if !selection.use_global_association {
+        return GlobalVisualLocalization {
+            debug: None,
+            associations: Vec::new(),
+        };
+    }
+
+    let result = localizer.localize(input.clone());
+    let debug = result.as_ref().map(global_localization_debug_from_result);
+    let associations = result
+        .as_ref()
+        .and_then(GlobalLocalizationResult::unique_feature_associations)
+        .map(|associations| {
+            field_mark_associations(associations.iter(), FieldMarkAssociationKind::GlobalUnique)
+        })
+        .unwrap_or_default();
+
     GlobalVisualLocalization {
-        debug: result.as_ref().map(global_localization_debug_from_result),
-        associations: result
-            .as_ref()
-            .and_then(GlobalLocalizationResult::unique_feature_associations)
-            .map(|associations| {
-                field_mark_associations(associations.iter(), FieldMarkAssociationKind::GlobalUnique)
-            })
-            .unwrap_or_default(),
+        debug,
+        associations,
     }
 }
 
@@ -320,6 +369,7 @@ impl FieldMarkAssociationState {
         field_dimensions: &FieldDimensions,
         pose_hint: Option<Isometry3<Robot, Field>>,
         parameters: &FieldMarkAssociationParameters,
+        selection: FieldMarkAssociationSelection,
         include_debug: bool,
     ) -> GlobalVisualLocalization {
         let localizer = GlobalAssociator::new(parameters.global_localizer);
@@ -332,8 +382,11 @@ impl FieldMarkAssociationState {
             pose_hint,
         };
 
-        let pose_hint_result =
-            localizer.associate_with_pose_hint(input.clone(), parameters.pose_hint);
+        let pose_hint_result = if selection.use_pose_hint_association {
+            localizer.associate_with_pose_hint(input.clone(), parameters.pose_hint)
+        } else {
+            PoseHintAssociationResult::default()
+        };
         if !pose_hint_result.associations.is_empty() {
             if pose_hint_result.is_healthy(parameters.pose_hint) {
                 self.has_global_lock = true;
@@ -342,6 +395,13 @@ impl FieldMarkAssociationState {
             return GlobalVisualLocalization {
                 debug: None,
                 associations: pose_hint_field_mark_associations(&pose_hint_result),
+            };
+        }
+
+        if !selection.use_global_association {
+            return GlobalVisualLocalization {
+                debug: None,
+                associations: Vec::new(),
             };
         }
 
@@ -831,6 +891,54 @@ mod tests {
                 .iter()
                 .all(|association| association.kind == FieldMarkAssociationKind::GlobalUnique),
             "global association should be used after pose-hint reprojection is rejected: {:?}",
+            localization.associations
+        );
+    }
+
+    #[test]
+    fn local_only_association_does_not_fall_back_to_global() {
+        let field = FieldDimensions::SPL_2025;
+        let true_pose = robot_to_field(0.0, 0.0, 0.0);
+        let wrong_pose_hint = robot_to_field(0.6, 0.0, 0.0);
+        let camera_matrix = synthetic_camera_matrix();
+        let features = features_projected_from_pose(
+            &camera_matrix,
+            true_pose,
+            [
+                (
+                    VisualFeatureClass::GoalPost,
+                    field.goal_post(Half::Opponent, Side::Left),
+                ),
+                (
+                    VisualFeatureClass::GoalPost,
+                    field.goal_post(Half::Opponent, Side::Right),
+                ),
+                (
+                    VisualFeatureClass::PenaltySpot,
+                    field.penalty_spot(Half::Opponent),
+                ),
+                (VisualFeatureClass::TSpot, field.t_crossing(Side::Left)),
+            ],
+        );
+
+        let mut parameters = FieldMarkAssociationParameters::default();
+        parameters.pose_hint.max_reprojection_error_px = 1.0;
+
+        let localization = associate_visual_features_selected(
+            &features,
+            &camera_matrix,
+            &field,
+            Some(wrong_pose_hint),
+            &parameters,
+            FieldMarkAssociationSelection {
+                use_global_association: false,
+                use_pose_hint_association: true,
+            },
+        );
+
+        assert!(
+            localization.associations.is_empty(),
+            "local-only association must not use global fallback: {:?}",
             localization.associations
         );
     }

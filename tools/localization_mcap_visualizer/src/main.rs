@@ -191,7 +191,8 @@ fn replay_parameters(arguments: &Arguments) -> ReplayParameters {
         parameters.include_visual_odometry = false;
     }
     if arguments.no_global_features {
-        parameters.include_global_features = false;
+        parameters.include_global_association = false;
+        parameters.include_pose_hint_association = false;
     }
     if arguments.no_imu {
         parameters.include_imu = false;
@@ -836,7 +837,8 @@ fn print_resolve_summary(
 fn print_orientation_only_summary(recording: &mcap_recording::Recording) -> Result<()> {
     let parameters = ReplayParameters {
         include_visual_odometry: false,
-        include_global_features: false,
+        include_global_association: false,
+        include_pose_hint_association: false,
         include_foot_heights: false,
         include_imu: true,
         ..ReplayParameters::default()
