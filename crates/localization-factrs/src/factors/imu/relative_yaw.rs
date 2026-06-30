@@ -5,11 +5,11 @@ use factrs::{
     variables::SE23,
 };
 
-use super::orientation::{relative_heading_yaw, relative_yaw_error, relative_yaw_information_root};
+use super::orientation::{relative_orientation, relative_yaw_error, relative_yaw_information_root};
 
 #[derive(Debug, Clone)]
 pub(crate) struct RelativeYawFactor {
-    measured_relative_yaw: f64,
+    measured_relative_orientation: SO3,
     information_root: f64,
 }
 
@@ -23,7 +23,8 @@ impl Residual for RelativeYawFactor {
     }
 
     fn residual<T: Numeric>(&self, (start, end): (SE23<T>, SE23<T>)) -> VectorX<T> {
-        let raw_error = relative_yaw_error(start.rot(), end.rot(), self.measured_relative_yaw);
+        let raw_error =
+            relative_yaw_error(start.rot(), end.rot(), &self.measured_relative_orientation);
 
         VectorX::<T>::from_element(1, T::from(self.information_root) * raw_error)
     }
@@ -36,7 +37,7 @@ impl RelativeYawFactor {
         roll_pitch_yaw_noise: Matrix3<f64>,
     ) -> Self {
         Self {
-            measured_relative_yaw: relative_heading_yaw(
+            measured_relative_orientation: relative_orientation(
                 &measured_start_orientation,
                 &measured_end_orientation,
             ),

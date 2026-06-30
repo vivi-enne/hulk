@@ -15,7 +15,7 @@ use crate::{
 };
 
 use super::orientation::{
-    local_up_xy_from_so3, orientation_from_measurement, relative_heading_yaw, relative_yaw_error,
+    local_up_xy_from_so3, orientation_from_measurement, relative_orientation, relative_yaw_error,
     relative_yaw_information_root, roll_pitch_information_root,
 };
 
@@ -23,7 +23,7 @@ use super::orientation::{
 pub(crate) struct CurrentSplineOrientationFactor {
     measurement_tau: f64,
     measured_local_up_xy: Vector2<f64>,
-    measured_relative_yaw: f64,
+    measured_relative_orientation: SO3,
     roll_pitch_information_root: Matrix2<f64>,
     yaw_information_root: f64,
     duration: f64,
@@ -46,8 +46,11 @@ impl Residual for CurrentSplineOrientationFactor {
             local_up_xy_from_so3(current_pose.rot()) - self.measured_local_up_xy.cast::<T>();
         let whitened_roll_pitch = self.roll_pitch_information_root.cast::<T>() * roll_pitch_error;
 
-        let yaw_error =
-            relative_yaw_error(start.rot(), current_pose.rot(), self.measured_relative_yaw);
+        let yaw_error = relative_yaw_error(
+            start.rot(),
+            current_pose.rot(),
+            &self.measured_relative_orientation,
+        );
 
         let mut residual = VectorX::<T>::zeros(3);
         residual
@@ -71,7 +74,7 @@ impl CurrentSplineOrientationFactor {
         Self {
             measurement_tau: tau::<f64>(start_time, end_time, current_measurement.time),
             measured_local_up_xy: local_up_xy_from_so3(&measured_current_orientation),
-            measured_relative_yaw: relative_heading_yaw(
+            measured_relative_orientation: relative_orientation(
                 &measured_start_orientation,
                 &measured_current_orientation,
             ),

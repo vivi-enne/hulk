@@ -67,34 +67,19 @@ pub(super) fn local_up_xy_from_so3<T: Numeric>(rotation: &SO3<T>) -> Vector2<T> 
     local_up.fixed_rows::<2>(0).into_owned()
 }
 
+pub(super) fn relative_orientation<T: Numeric>(start: &SO3<T>, end: &SO3<T>) -> SO3<T> {
+    start.inverse().compose(end)
+}
+
 pub(super) fn relative_yaw_error<T: Numeric>(
     predicted_start: &SO3<T>,
     predicted_end: &SO3<T>,
-    measured_relative_yaw: f64,
+    measured_relative_orientation: &SO3,
 ) -> T {
-    wrap_angle(
-        relative_heading_yaw(predicted_start, predicted_end) - T::from(measured_relative_yaw),
-    )
-}
-
-fn heading_yaw<T: Numeric>(rotation: &SO3<T>) -> T {
-    let one = T::one();
-    let two = T::from(2.0);
-
-    let w = rotation.w();
-    let x = rotation.x();
-    let y = rotation.y();
-    let z = rotation.z();
-
-    (two * (w * z + x * y)).atan2(one - two * (y * y + z * z))
-}
-
-fn wrap_angle<T: Numeric>(angle: T) -> T {
-    angle.sin().atan2(angle.cos())
-}
-
-pub(super) fn relative_heading_yaw<T: Numeric>(start: &SO3<T>, end: &SO3<T>) -> T {
-    wrap_angle(heading_yaw(end) - heading_yaw(start))
+    let predicted_relative = relative_orientation(predicted_start, predicted_end);
+    let mut measured_relative = measured_relative_orientation.cast::<T>();
+    measured_relative = measured_relative.inverse().compose(&predicted_relative);
+    roll_pitch_yaw_from_so3(&measured_relative).z
 }
 
 fn geodesic_interpolate(start: SO3, end: SO3, alpha: f64) -> SO3 {
@@ -102,7 +87,6 @@ fn geodesic_interpolate(start: SO3, end: SO3, alpha: f64) -> SO3 {
     start.oplus_right((phi * alpha).as_view())
 }
 
-#[cfg(test)]
 pub(super) fn roll_pitch_yaw_from_so3<T: Numeric>(rotation: &SO3<T>) -> Vector3<T> {
     let one = T::from(1.0);
     let two = T::from(2.0);
