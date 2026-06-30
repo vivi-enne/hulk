@@ -28,12 +28,11 @@ use field_mark_association::{
     localize_global_visual_features_detailed_debug,
 };
 use linear_algebra::IntoTransform;
-use localization_3d::{SolveDiagnostics, initial_robot_to_field_from_camera_matrix};
+use localization_3d::initial_robot_to_field_from_camera_matrix;
 use projection::camera_matrix::CameraMatrix;
 use types::{
     field_dimensions::FieldDimensions,
     object_detection::{Object, RobocupObjectLabel},
-    time_wrapper::TimeWrapper,
 };
 
 use crate::{
@@ -230,7 +229,7 @@ impl App for LocalizationMcapVisualizerApp {
         let project_robot_marker_before_ui = self.project_robot_marker_to_ground;
 
         self.header(context);
-        self.parameters_panel(context, snapshot.solve_diagnostics.as_ref());
+        self.parameters_panel(context);
         self.camera_panel(
             context,
             &snapshot.detected_objects,
@@ -676,412 +675,415 @@ impl LocalizationMcapVisualizerApp {
         });
     }
 
-    fn parameters_panel(
-        &mut self,
-        context: &Context,
-        recorded_solve_diagnostics: Option<&TimeWrapper<SolveDiagnostics>>,
-    ) {
+    fn parameters_panel(&mut self, context: &Context) {
         SidePanel::left("parameters_panel")
             .resizable(true)
             .default_width(360.0)
             .show(context, |ui| {
-                ui.heading("Resolve Parameters");
-                ui.add_space(6.0);
-                ui.horizontal(|ui| {
-                    ui.label("timestamps");
-                    ui.radio_value(
-                        &mut self.parameters.timestamp_mode,
-                        TimestampMode::McapPublish,
-                        "MCAP/source",
-                    );
-                    ui.radio_value(
-                        &mut self.parameters.timestamp_mode,
-                        TimestampMode::Embedded,
-                        "embedded",
-                    );
-                });
-                numeric_row(
-                    ui,
-                    "solve cadence ms",
-                    &mut self.parameters.solve_cadence_ms,
-                    1.0..=500.0,
-                );
-                ui.horizontal(|ui| {
-                    ui.label("optimizer iterations");
-                    ui.add(DragValue::new(&mut self.parameters.optimizer_iterations).range(1..=50));
-                });
-                numeric_row(
-                    ui,
-                    "max window s",
-                    &mut self.parameters.max_window_seconds,
-                    0.2..=10.0,
-                );
-                let recording_duration = self.recording.duration().as_secs_f64();
-                numeric_row(
-                    ui,
-                    "solve start s",
-                    &mut self.parameters.solve_start_seconds,
-                    0.0..=recording_duration,
-                );
-                numeric_row(
-                    ui,
-                    "solve end s",
-                    &mut self.parameters.solve_end_seconds,
-                    0.0..=recording_duration,
-                );
-                if !self.parameters.solve_end_seconds.is_finite()
-                    || self.parameters.solve_end_seconds == 0.0
-                {
-                    self.parameters.solve_end_seconds = recording_duration;
-                }
-                if self.parameters.solve_start_seconds > self.parameters.solve_end_seconds {
-                    self.parameters.solve_end_seconds = self.parameters.solve_start_seconds;
-                }
-                numeric_row(
-                    ui,
-                    "visual feature variance",
-                    &mut self.parameters.visual_feature_noise_variance,
-                    1.0..=100_000.0,
-                );
-                numeric_row(
-                    ui,
-                    "pose-hint visual variance",
-                    &mut self.parameters.pose_hint_visual_feature_noise_variance,
-                    1.0..=100_000.0,
-                );
-                numeric_row(
-                    ui,
-                    "pose-hint Huber",
-                    &mut self.parameters.pose_hint_visual_huber_threshold,
-                    0.1..=100.0,
-                );
-                ui.horizontal(|ui| {
-                    ui.label("pose-hint min features");
-                    ui.add(
-                        DragValue::new(
-                            &mut self.parameters.pose_hint_visual_min_features_per_frame,
-                        )
-                        .range(1..=16),
-                    );
-                });
-                numeric_row(
-                    ui,
-                    "VO covariance",
-                    &mut self.parameters.visual_odometry_covariance,
-                    1.0e-8..=1.0,
-                );
-                ui.checkbox(
-                    &mut self.parameters.override_visual_odometry_covariance,
-                    "override VO covariance",
-                );
-                ui.checkbox(
-                    &mut self.parameters.reject_visual_odometry_during_head_motion,
-                    "reject VO during head motion",
-                );
-                ui.horizontal(|ui| {
-                    ui.label("VO head rot rad");
-                    ui.add(
-                        DragValue::new(&mut self.parameters.max_visual_odometry_extrinsic_rotation)
-                            .speed(0.001)
-                            .range(0.0..=1.0),
-                    );
-                });
-                ui.horizontal(|ui| {
-                    ui.label("VO head trans m");
-                    ui.add(
-                        DragValue::new(
-                            &mut self.parameters.max_visual_odometry_extrinsic_translation,
-                        )
-                        .speed(0.001)
-                        .range(0.0..=0.2),
-                    );
-                });
-                ui.checkbox(
-                    &mut self
-                        .parameters
-                        .require_recent_visual_anchor_for_large_pose_updates,
-                    "reuse pose for unanchored jumps",
-                );
-                ui.horizontal(|ui| {
-                    ui.label("visual anchor age ms");
-                    let mut max_visual_anchor_age_ms =
-                        self.parameters.max_visual_anchor_age.as_secs_f64() * 1000.0;
-                    if ui
-                        .add(
-                            DragValue::new(&mut max_visual_anchor_age_ms)
-                                .speed(10.0)
-                                .range(10.0..=5000.0),
-                        )
-                        .changed()
-                    {
-                        self.parameters.max_visual_anchor_age =
-                            Duration::from_secs_f64(max_visual_anchor_age_ms / 1000.0);
-                    }
-                });
-                ui.horizontal(|ui| {
-                    ui.label("unanchored xy m");
-                    ui.add(
-                        DragValue::new(&mut self.parameters.max_unanchored_translation_update)
-                            .speed(0.01)
-                            .range(0.0..=2.0),
-                    );
-                });
-                ui.horizontal(|ui| {
-                    ui.label("unanchored yaw rad");
-                    ui.add(
-                        DragValue::new(&mut self.parameters.max_unanchored_yaw_update)
-                            .speed(0.01)
-                            .range(0.0..=3.2),
-                    );
-                });
-                ui.separator();
-                ui.label(RichText::new("Component Presets").strong());
-                ui.horizontal_wrapped(|ui| {
-                    if ui.button("Full").clicked() {
-                        self.apply_component_preset(ComponentPreset::Full);
-                    }
-                    if ui.button("VO only").clicked() {
-                        self.apply_component_preset(ComponentPreset::VisualOdometryOnly);
-                    }
-                    if ui.button("Global only").clicked() {
-                        self.apply_component_preset(ComponentPreset::GlobalFeaturesOnly);
-                    }
-                    if ui.button("Visual assoc").clicked() {
-                        self.apply_component_preset(ComponentPreset::VisualAssociationsOnly);
-                    }
-                    if ui.button("IMU R/P").clicked() {
-                        self.apply_component_preset(ComponentPreset::ImuRollPitchOnly);
-                    }
-                    if ui.button("IMU yaw").clicked() {
-                        self.apply_component_preset(ComponentPreset::ImuYawOnly);
-                    }
-                    if ui.button("IMU RPY").clicked() {
-                        self.apply_component_preset(ComponentPreset::ImuOrientationOnly);
-                    }
-                    if ui.button("IMU kin").clicked() {
-                        self.apply_component_preset(ComponentPreset::ImuKinematicsOnly);
-                    }
-                    if ui.button("Foot").clicked() {
-                        self.apply_component_preset(ComponentPreset::FootHeightsOnly);
-                    }
-                    if ui.button("VO+IMU").clicked() {
-                        self.apply_component_preset(ComponentPreset::VisualOdometryAndImu);
-                    }
-                    if ui.button("VO+Foot").clicked() {
-                        self.apply_component_preset(ComponentPreset::VisualOdometryAndFootHeights);
-                    }
-                    if ui.button("VO+Visual").clicked() {
-                        self.apply_component_preset(ComponentPreset::VisualOdometryAndVisual);
-                    }
-                });
-                ui.separator();
-                ui.checkbox(
-                    &mut self.parameters.include_visual_odometry,
-                    "include visual odometry",
-                );
-                ui.checkbox(
-                    &mut self.parameters.include_global_features,
-                    "include global visual features",
-                );
-                ui.checkbox(
-                    &mut self.parameters.recompute_global_features,
-                    "recompute global features from detections",
-                );
-                ui.checkbox(&mut self.parameters.include_imu, "include IMU");
-                ui.indent("imu_component_toggles", |ui| {
-                    ui.checkbox(
-                        &mut self.parameters.include_imu_roll_pitch,
-                        "roll/pitch attitude",
-                    );
-                    ui.checkbox(&mut self.parameters.include_imu_yaw, "relative yaw");
-                    ui.checkbox(
-                        &mut self.parameters.include_current_spline_orientation,
-                        "current RPY inside active interval",
-                    );
-                    ui.checkbox(
-                        &mut self.parameters.include_imu_kinematics,
-                        "gyro/accel kinematics",
-                    );
-                });
-                ui.checkbox(
-                    &mut self.parameters.include_foot_heights,
-                    "include foot heights",
-                );
-                ui.separator();
-                ui.label(RichText::new("Global Localizer").strong());
-                ui.horizontal(|ui| {
-                    ui.label("min inliers");
-                    ui.add(
-                        DragValue::new(&mut self.parameters.global_localizer.min_inliers)
-                            .range(3..=16),
-                    );
-                });
-                ui.horizontal(|ui| {
-                    ui.label("min confidence");
-                    ui.add(
-                        DragValue::new(&mut self.parameters.global_localizer.min_confidence)
-                            .speed(0.01)
-                            .range(0.0..=1.0),
-                    );
-                });
-                ui.horizontal(|ui| {
-                    ui.label("detection baseline");
-                    ui.add(
-                        DragValue::new(
-                            &mut self.parameters.global_localizer.min_detection_baseline,
-                        )
-                        .speed(0.01)
-                        .range(0.01..=2.0),
-                    );
-                });
-                ui.horizontal(|ui| {
-                    ui.label("map baseline m");
-                    ui.add(
-                        DragValue::new(&mut self.parameters.global_localizer.min_map_baseline)
-                            .speed(0.01)
-                            .range(0.01..=2.0),
-                    );
-                });
-                ui.horizontal(|ui| {
-                    ui.label("height min/max");
-                    ui.add(
-                        DragValue::new(&mut self.parameters.global_localizer.height_min)
-                            .speed(0.01)
-                            .range(0.05..=2.0),
-                    );
-                    ui.add(
-                        DragValue::new(&mut self.parameters.global_localizer.height_max)
-                            .speed(0.01)
-                            .range(0.05..=2.0),
-                    );
-                });
-                if self.parameters.global_localizer.height_min
-                    > self.parameters.global_localizer.height_max
-                {
-                    self.parameters.global_localizer.height_max =
-                        self.parameters.global_localizer.height_min;
-                }
-                ui.horizontal(|ui| {
-                    ui.label("association gate m");
-                    ui.add(
-                        DragValue::new(&mut self.parameters.global_localizer.association_gate)
-                            .speed(0.01)
-                            .range(0.05..=2.0),
-                    );
-                });
-                ui.horizontal(|ui| {
-                    ui.label("RMS threshold m");
-                    ui.add(
-                        DragValue::new(&mut self.parameters.global_localizer.rms_threshold)
-                            .speed(0.01)
-                            .range(0.01..=2.0),
-                    );
-                });
-                ui.horizontal(|ui| {
-                    ui.label("min score");
-                    ui.add(
-                        DragValue::new(&mut self.parameters.global_localizer.min_score)
-                            .speed(0.01)
-                            .range(0.0..=10.0),
-                    );
-                });
-                ui.horizontal(|ui| {
-                    ui.label("score ratio");
-                    ui.add(
-                        DragValue::new(&mut self.parameters.global_localizer.score_ratio)
-                            .speed(0.01)
-                            .range(1.0..=10.0),
-                    );
-                });
-                ui.horizontal(|ui| {
-                    ui.label("residual weight");
-                    ui.add(
-                        DragValue::new(&mut self.parameters.global_localizer.residual_weight)
-                            .speed(0.01)
-                            .range(0.0..=10.0),
-                    );
-                });
-                ui.separator();
-                ui.label(RichText::new("Pose-Hint Fallback").strong());
-                ui.checkbox(&mut self.parameters.pose_hint.enabled, "enabled");
-                ui.horizontal(|ui| {
-                    ui.label("max pose age ms");
-                    let mut max_pose_age_ms =
-                        self.parameters.pose_hint.max_pose_age.as_secs_f64() * 1000.0;
-                    if ui
-                        .add(
-                            DragValue::new(&mut max_pose_age_ms)
+                egui::ScrollArea::vertical()
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        ui.heading("Resolve Parameters");
+                        ui.add_space(6.0);
+                        ui.horizontal(|ui| {
+                            ui.label("timestamps");
+                            ui.radio_value(
+                                &mut self.parameters.timestamp_mode,
+                                TimestampMode::McapPublish,
+                                "MCAP/source",
+                            );
+                            ui.radio_value(
+                                &mut self.parameters.timestamp_mode,
+                                TimestampMode::Embedded,
+                                "embedded",
+                            );
+                        });
+                        numeric_row(
+                            ui,
+                            "solve cadence ms",
+                            &mut self.parameters.solve_cadence_ms,
+                            1.0..=500.0,
+                        );
+                        ui.horizontal(|ui| {
+                            ui.label("optimizer iterations");
+                            ui.add(
+                                DragValue::new(&mut self.parameters.optimizer_iterations)
+                                    .range(1..=50),
+                            );
+                        });
+                        numeric_row(
+                            ui,
+                            "max window s",
+                            &mut self.parameters.max_window_seconds,
+                            0.2..=10.0,
+                        );
+                        let recording_duration = self.recording.duration().as_secs_f64();
+                        numeric_row(
+                            ui,
+                            "solve start s",
+                            &mut self.parameters.solve_start_seconds,
+                            0.0..=recording_duration,
+                        );
+                        numeric_row(
+                            ui,
+                            "solve end s",
+                            &mut self.parameters.solve_end_seconds,
+                            0.0..=recording_duration,
+                        );
+                        if !self.parameters.solve_end_seconds.is_finite()
+                            || self.parameters.solve_end_seconds == 0.0
+                        {
+                            self.parameters.solve_end_seconds = recording_duration;
+                        }
+                        if self.parameters.solve_start_seconds > self.parameters.solve_end_seconds {
+                            self.parameters.solve_end_seconds = self.parameters.solve_start_seconds;
+                        }
+                        numeric_row(
+                            ui,
+                            "visual feature variance",
+                            &mut self.parameters.visual_feature_noise_variance,
+                            1.0..=100_000.0,
+                        );
+                        numeric_row(
+                            ui,
+                            "pose-hint visual variance",
+                            &mut self.parameters.pose_hint_visual_feature_noise_variance,
+                            1.0..=100_000.0,
+                        );
+                        numeric_row(
+                            ui,
+                            "pose-hint Huber",
+                            &mut self.parameters.pose_hint_visual_huber_threshold,
+                            0.1..=100.0,
+                        );
+                        ui.horizontal(|ui| {
+                            ui.label("pose-hint min features");
+                            ui.add(
+                                DragValue::new(
+                                    &mut self.parameters.pose_hint_visual_min_features_per_frame,
+                                )
+                                .range(1..=16),
+                            );
+                        });
+                        numeric_row(
+                            ui,
+                            "VO covariance",
+                            &mut self.parameters.visual_odometry_covariance,
+                            1.0e-8..=1.0,
+                        );
+                        ui.checkbox(
+                            &mut self.parameters.override_visual_odometry_covariance,
+                            "override VO covariance",
+                        );
+                        ui.checkbox(
+                            &mut self
+                                .parameters
+                                .require_recent_visual_anchor_for_large_pose_updates,
+                            "reuse pose for unanchored jumps",
+                        );
+                        ui.horizontal(|ui| {
+                            ui.label("visual anchor age ms");
+                            let mut max_visual_anchor_age_ms =
+                                self.parameters.max_visual_anchor_age.as_secs_f64() * 1000.0;
+                            if ui
+                                .add(
+                                    DragValue::new(&mut max_visual_anchor_age_ms)
+                                        .speed(10.0)
+                                        .range(10.0..=5000.0),
+                                )
+                                .changed()
+                            {
+                                self.parameters.max_visual_anchor_age =
+                                    Duration::from_secs_f64(max_visual_anchor_age_ms / 1000.0);
+                            }
+                        });
+                        ui.horizontal(|ui| {
+                            ui.label("unanchored xy m");
+                            ui.add(
+                                DragValue::new(
+                                    &mut self.parameters.max_unanchored_translation_update,
+                                )
+                                .speed(0.01)
+                                .range(0.0..=2.0),
+                            );
+                        });
+                        ui.horizontal(|ui| {
+                            ui.label("unanchored yaw rad");
+                            ui.add(
+                                DragValue::new(&mut self.parameters.max_unanchored_yaw_update)
+                                    .speed(0.01)
+                                    .range(0.0..=3.2),
+                            );
+                        });
+                        ui.separator();
+                        ui.label(RichText::new("Component Presets").strong());
+                        ui.horizontal_wrapped(|ui| {
+                            if ui.button("Full").clicked() {
+                                self.apply_component_preset(ComponentPreset::Full);
+                            }
+                            if ui.button("VO only").clicked() {
+                                self.apply_component_preset(ComponentPreset::VisualOdometryOnly);
+                            }
+                            if ui.button("Global only").clicked() {
+                                self.apply_component_preset(ComponentPreset::GlobalFeaturesOnly);
+                            }
+                            if ui.button("Visual assoc").clicked() {
+                                self.apply_component_preset(
+                                    ComponentPreset::VisualAssociationsOnly,
+                                );
+                            }
+                            if ui.button("IMU R/P").clicked() {
+                                self.apply_component_preset(ComponentPreset::ImuRollPitchOnly);
+                            }
+                            if ui.button("IMU yaw").clicked() {
+                                self.apply_component_preset(ComponentPreset::ImuYawOnly);
+                            }
+                            if ui.button("IMU RPY").clicked() {
+                                self.apply_component_preset(ComponentPreset::ImuOrientationOnly);
+                            }
+                            if ui.button("IMU kin").clicked() {
+                                self.apply_component_preset(ComponentPreset::ImuKinematicsOnly);
+                            }
+                            if ui.button("Foot").clicked() {
+                                self.apply_component_preset(ComponentPreset::FootHeightsOnly);
+                            }
+                            if ui.button("VO+IMU").clicked() {
+                                self.apply_component_preset(ComponentPreset::VisualOdometryAndImu);
+                            }
+                            if ui.button("VO+Foot").clicked() {
+                                self.apply_component_preset(
+                                    ComponentPreset::VisualOdometryAndFootHeights,
+                                );
+                            }
+                            if ui.button("VO+Visual").clicked() {
+                                self.apply_component_preset(
+                                    ComponentPreset::VisualOdometryAndVisual,
+                                );
+                            }
+                        });
+                        ui.separator();
+                        ui.checkbox(&mut self.parameters.include_visual_odometry, "include VO");
+                        ui.checkbox(
+                            &mut self.parameters.include_global_features,
+                            "include global visual features",
+                        );
+                        ui.checkbox(
+                            &mut self.parameters.recompute_global_features,
+                            "recompute global features from detections",
+                        );
+                        ui.checkbox(&mut self.parameters.include_imu, "include IMU");
+                        ui.indent("imu_component_toggles", |ui| {
+                            ui.checkbox(
+                                &mut self.parameters.include_imu_roll_pitch,
+                                "roll/pitch attitude",
+                            );
+                            ui.checkbox(&mut self.parameters.include_imu_yaw, "relative yaw");
+                            ui.checkbox(
+                                &mut self.parameters.include_current_spline_orientation,
+                                "current RPY inside active interval",
+                            );
+                            ui.checkbox(
+                                &mut self.parameters.include_imu_kinematics,
+                                "gyro/accel kinematics",
+                            );
+                        });
+                        ui.checkbox(
+                            &mut self.parameters.include_foot_heights,
+                            "include foot heights",
+                        );
+                        ui.separator();
+                        ui.label(RichText::new("Global Localizer").strong());
+                        ui.horizontal(|ui| {
+                            ui.label("min inliers");
+                            ui.add(
+                                DragValue::new(&mut self.parameters.global_localizer.min_inliers)
+                                    .range(3..=16),
+                            );
+                        });
+                        ui.horizontal(|ui| {
+                            ui.label("min confidence");
+                            ui.add(
+                                DragValue::new(
+                                    &mut self.parameters.global_localizer.min_confidence,
+                                )
+                                .speed(0.01)
+                                .range(0.0..=1.0),
+                            );
+                        });
+                        ui.horizontal(|ui| {
+                            ui.label("detection baseline");
+                            ui.add(
+                                DragValue::new(
+                                    &mut self.parameters.global_localizer.min_detection_baseline,
+                                )
+                                .speed(0.01)
+                                .range(0.01..=2.0),
+                            );
+                        });
+                        ui.horizontal(|ui| {
+                            ui.label("map baseline m");
+                            ui.add(
+                                DragValue::new(
+                                    &mut self.parameters.global_localizer.min_map_baseline,
+                                )
+                                .speed(0.01)
+                                .range(0.01..=2.0),
+                            );
+                        });
+                        ui.horizontal(|ui| {
+                            ui.label("height min/max");
+                            ui.add(
+                                DragValue::new(&mut self.parameters.global_localizer.height_min)
+                                    .speed(0.01)
+                                    .range(0.05..=2.0),
+                            );
+                            ui.add(
+                                DragValue::new(&mut self.parameters.global_localizer.height_max)
+                                    .speed(0.01)
+                                    .range(0.05..=2.0),
+                            );
+                        });
+                        if self.parameters.global_localizer.height_min
+                            > self.parameters.global_localizer.height_max
+                        {
+                            self.parameters.global_localizer.height_max =
+                                self.parameters.global_localizer.height_min;
+                        }
+                        ui.horizontal(|ui| {
+                            ui.label("association gate m");
+                            ui.add(
+                                DragValue::new(
+                                    &mut self.parameters.global_localizer.association_gate,
+                                )
+                                .speed(0.01)
+                                .range(0.05..=2.0),
+                            );
+                        });
+                        ui.horizontal(|ui| {
+                            ui.label("RMS threshold m");
+                            ui.add(
+                                DragValue::new(&mut self.parameters.global_localizer.rms_threshold)
+                                    .speed(0.01)
+                                    .range(0.01..=2.0),
+                            );
+                        });
+                        ui.horizontal(|ui| {
+                            ui.label("min score");
+                            ui.add(
+                                DragValue::new(&mut self.parameters.global_localizer.min_score)
+                                    .speed(0.01)
+                                    .range(0.0..=10.0),
+                            );
+                        });
+                        ui.horizontal(|ui| {
+                            ui.label("score ratio");
+                            ui.add(
+                                DragValue::new(&mut self.parameters.global_localizer.score_ratio)
+                                    .speed(0.01)
+                                    .range(1.0..=10.0),
+                            );
+                        });
+                        ui.horizontal(|ui| {
+                            ui.label("residual weight");
+                            ui.add(
+                                DragValue::new(
+                                    &mut self.parameters.global_localizer.residual_weight,
+                                )
+                                .speed(0.01)
+                                .range(0.0..=10.0),
+                            );
+                        });
+                        ui.separator();
+                        ui.label(RichText::new("Pose-Hint Fallback").strong());
+                        ui.checkbox(&mut self.parameters.pose_hint.enabled, "enabled");
+                        ui.horizontal(|ui| {
+                            ui.label("max pose age ms");
+                            let mut max_pose_age_ms =
+                                self.parameters.pose_hint.max_pose_age.as_secs_f64() * 1000.0;
+                            if ui
+                                .add(
+                                    DragValue::new(&mut max_pose_age_ms)
+                                        .speed(1.0)
+                                        .range(1.0..=5000.0),
+                                )
+                                .changed()
+                            {
+                                self.parameters.pose_hint.max_pose_age =
+                                    Duration::from_secs_f64(max_pose_age_ms / 1000.0);
+                            }
+                        });
+                        ui.horizontal(|ui| {
+                            ui.label("reprojection gate px");
+                            ui.add(
+                                DragValue::new(
+                                    &mut self.parameters.pose_hint.max_reprojection_error_px,
+                                )
                                 .speed(1.0)
-                                .range(1.0..=5000.0),
-                        )
-                        .changed()
-                    {
-                        self.parameters.pose_hint.max_pose_age =
-                            Duration::from_secs_f64(max_pose_age_ms / 1000.0);
-                    }
-                });
-                ui.horizontal(|ui| {
-                    ui.label("reprojection gate px");
-                    ui.add(
-                        DragValue::new(&mut self.parameters.pose_hint.max_reprojection_error_px)
-                            .speed(1.0)
-                            .range(1.0..=500.0),
-                    );
-                });
-                ui.horizontal(|ui| {
-                    ui.label("second-best margin px");
-                    ui.add(
-                        DragValue::new(
-                            &mut self.parameters.pose_hint.second_best_reprojection_margin_px,
-                        )
-                        .speed(1.0)
-                        .range(0.0..=200.0),
-                    );
-                });
-                ui.horizontal(|ui| {
-                    ui.label("healthy min inliers");
-                    ui.add(
-                        DragValue::new(&mut self.parameters.pose_hint.healthy_min_inliers)
-                            .speed(1.0)
-                            .range(1..=20),
-                    );
-                });
-                ui.horizontal(|ui| {
-                    ui.label("healthy RMSE px");
-                    ui.add(
-                        DragValue::new(&mut self.parameters.pose_hint.healthy_max_rmse_px)
-                            .speed(1.0)
-                            .range(1.0..=200.0),
-                    );
-                });
-                ui.horizontal(|ui| {
-                    ui.label("recovery frames");
-                    ui.add(
-                        DragValue::new(&mut self.parameters.pose_hint.recovery_frames)
-                            .speed(1.0)
-                            .range(1..=30),
-                    );
-                });
-                ui.horizontal(|ui| {
-                    ui.label("recovery distance m");
-                    ui.add(
-                        DragValue::new(&mut self.parameters.pose_hint.recovery_max_pose_distance)
-                            .speed(0.05)
-                            .range(0.05..=5.0),
-                    );
-                });
-                ui.horizontal(|ui| {
-                    ui.label("recovery yaw rad");
-                    ui.add(
-                        DragValue::new(&mut self.parameters.pose_hint.recovery_max_pose_angle)
-                            .speed(0.01)
-                            .range(0.01..=std::f32::consts::PI),
-                    );
-                });
-                ui.separator();
-                self.resolve_controls(ui);
-                ui.separator();
-                self.diagnostics(ui, recorded_solve_diagnostics);
+                                .range(1.0..=500.0),
+                            );
+                        });
+                        ui.horizontal(|ui| {
+                            ui.label("second-best margin px");
+                            ui.add(
+                                DragValue::new(
+                                    &mut self
+                                        .parameters
+                                        .pose_hint
+                                        .second_best_reprojection_margin_px,
+                                )
+                                .speed(1.0)
+                                .range(0.0..=200.0),
+                            );
+                        });
+                        ui.horizontal(|ui| {
+                            ui.label("healthy min inliers");
+                            ui.add(
+                                DragValue::new(&mut self.parameters.pose_hint.healthy_min_inliers)
+                                    .speed(1.0)
+                                    .range(1..=20),
+                            );
+                        });
+                        ui.horizontal(|ui| {
+                            ui.label("healthy RMSE px");
+                            ui.add(
+                                DragValue::new(&mut self.parameters.pose_hint.healthy_max_rmse_px)
+                                    .speed(1.0)
+                                    .range(1.0..=200.0),
+                            );
+                        });
+                        ui.horizontal(|ui| {
+                            ui.label("recovery frames");
+                            ui.add(
+                                DragValue::new(&mut self.parameters.pose_hint.recovery_frames)
+                                    .speed(1.0)
+                                    .range(1..=30),
+                            );
+                        });
+                        ui.horizontal(|ui| {
+                            ui.label("recovery distance m");
+                            ui.add(
+                                DragValue::new(
+                                    &mut self.parameters.pose_hint.recovery_max_pose_distance,
+                                )
+                                .speed(0.05)
+                                .range(0.05..=5.0),
+                            );
+                        });
+                        ui.horizontal(|ui| {
+                            ui.label("recovery yaw rad");
+                            ui.add(
+                                DragValue::new(
+                                    &mut self.parameters.pose_hint.recovery_max_pose_angle,
+                                )
+                                .speed(0.01)
+                                .range(0.01..=std::f32::consts::PI),
+                            );
+                        });
+                        ui.separator();
+                        self.resolve_controls(ui);
+                        ui.separator();
+                        self.diagnostics(ui);
+                    });
             });
     }
 
@@ -1263,22 +1265,8 @@ impl LocalizationMcapVisualizerApp {
         }
     }
 
-    fn diagnostics(
-        &self,
-        ui: &mut Ui,
-        recorded_solve_diagnostics: Option<&TimeWrapper<SolveDiagnostics>>,
-    ) {
+    fn diagnostics(&self, ui: &mut Ui) {
         ui.heading("Diagnostics");
-        if let Some(diagnostics) = recorded_solve_diagnostics {
-            ui.label(format!(
-                "recorded solve diagnostics at {:.2}s",
-                self.recording
-                    .seconds_since_start(diagnostics.time.to_wallclock())
-            ));
-            recorded_solve_diagnostics_summary(ui, &diagnostics.inner);
-            ui.separator();
-        }
-
         let Some(result) = self.resolved_result() else {
             ui.label(
                 RichText::new("Run Resolve to populate replay solve diagnostics.")
@@ -1348,8 +1336,7 @@ impl LocalizationMcapVisualizerApp {
                 ));
                 ui.label(format!(
                     "foot RMS mean/max: {:.3} / {:.3}",
-                    diagnostics.foot_above_ground.mean_rms,
-                    diagnostics.foot_above_ground.max_rms
+                    diagnostics.foot_above_ground.mean_rms, diagnostics.foot_above_ground.max_rms
                 ));
                 ui.label(format!(
                     "GP RMS mean/max: {:.3} / {:.3}",
@@ -1978,33 +1965,6 @@ fn recorded_global_debug_status(
             GlobalLocalizationDetailedStatus::UniqueModuloSymmetry
         }
     }
-}
-
-fn recorded_solve_diagnostics_summary(ui: &mut Ui, diagnostics: &SolveDiagnostics) {
-    ui.label(format!(
-        "recorded optimizer: {:?}",
-        diagnostics.optimizer_status
-    ));
-    ui.label(format!(
-        "recorded values/factors: {} / {}",
-        diagnostics.value_count, diagnostics.factor_count
-    ));
-    ui.label(format!(
-        "recorded total error: {:.3}",
-        diagnostics.total_error
-    ));
-    ui.label(format!(
-        "recorded VO RMS mean/max: {:.3} / {:.3}",
-        diagnostics.visual_odometry.mean_rms, diagnostics.visual_odometry.max_rms
-    ));
-    ui.label(format!(
-        "recorded visual RMS mean/max: {:.3} / {:.3}",
-        diagnostics.visual_reprojection.mean_rms, diagnostics.visual_reprojection.max_rms
-    ));
-    ui.label(format!(
-        "recorded GP RMS mean/max: {:.3} / {:.3}",
-        diagnostics.gaussian_process_prior.mean_rms, diagnostics.gaussian_process_prior.max_rms
-    ));
 }
 
 fn component_trace_label(parameters: &ReplayParameters, raw_vo: bool) -> String {

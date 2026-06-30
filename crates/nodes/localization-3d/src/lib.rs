@@ -43,20 +43,6 @@ pub struct Localization3dParameters {
     pub pose_hint_visual_feature_noise_variance: f64,
     /// Huber threshold for pose-hint visual residuals in whitened residual units.
     pub pose_hint_visual_huber_threshold: f64,
-    /// Ignore VO deltas while the head/camera moved between the two VO frames.
-    pub reject_visual_odometry_during_head_motion: bool,
-    /// Maximum allowed robot-to-camera rotation change for accepting VO, in radians.
-    pub max_visual_odometry_extrinsic_rotation: f32,
-    /// Maximum allowed robot-to-camera translation change for accepting VO, in meters.
-    pub max_visual_odometry_extrinsic_translation: f32,
-    /// Reuse the last accepted pose when an unanchored solve makes a large jump.
-    pub require_recent_visual_anchor_for_large_pose_updates: bool,
-    /// Maximum age of the last visual association frame before pose updates are treated as unanchored.
-    pub max_visual_anchor_age: Duration,
-    /// Maximum accepted x/y update without a recent visual anchor, in meters.
-    pub max_unanchored_translation_update: f32,
-    /// Maximum accepted yaw update without a recent visual anchor, in radians.
-    pub max_unanchored_yaw_update: f32,
 }
 
 impl Default for Localization3dParameters {
@@ -66,13 +52,6 @@ impl Default for Localization3dParameters {
             pose_hint_visual_feature_noise_variance:
                 DEFAULT_POSE_HINT_VISUAL_FEATURE_NOISE_VARIANCE,
             pose_hint_visual_huber_threshold: DEFAULT_POSE_HINT_VISUAL_HUBER_THRESHOLD,
-            reject_visual_odometry_during_head_motion: true,
-            max_visual_odometry_extrinsic_rotation: 0.02,
-            max_visual_odometry_extrinsic_translation: 0.005,
-            require_recent_visual_anchor_for_large_pose_updates: true,
-            max_visual_anchor_age: Duration::from_millis(300),
-            max_unanchored_translation_update: 0.08,
-            max_unanchored_yaw_update: 0.10,
         }
     }
 }
@@ -96,57 +75,23 @@ impl Localization3dParameters {
         {
             return Err("pose_hint_visual_huber_threshold must be finite and > 0".to_string());
         }
-        if !self.max_visual_odometry_extrinsic_rotation.is_finite()
-            || self.max_visual_odometry_extrinsic_rotation < 0.0
-        {
-            return Err(
-                "max_visual_odometry_extrinsic_rotation must be finite and >= 0".to_string(),
-            );
-        }
-        if !self.max_visual_odometry_extrinsic_translation.is_finite()
-            || self.max_visual_odometry_extrinsic_translation < 0.0
-        {
-            return Err(
-                "max_visual_odometry_extrinsic_translation must be finite and >= 0".to_string(),
-            );
-        }
-        if self.max_visual_anchor_age.is_zero() {
-            return Err("max_visual_anchor_age must be > 0".to_string());
-        }
-        if !self.max_unanchored_translation_update.is_finite()
-            || self.max_unanchored_translation_update < 0.0
-        {
-            return Err("max_unanchored_translation_update must be finite and >= 0".to_string());
-        }
-        if !self.max_unanchored_yaw_update.is_finite() || self.max_unanchored_yaw_update < 0.0 {
-            return Err("max_unanchored_yaw_update must be finite and >= 0".to_string());
-        }
         Ok(())
-    }
-
-    fn visual_odometry_extrinsic_gate(&self) -> VisualOdometryExtrinsicGate {
-        VisualOdometryExtrinsicGate {
-            reject_during_head_motion: self.reject_visual_odometry_during_head_motion,
-            max_rotation: self.max_visual_odometry_extrinsic_rotation,
-            max_translation: self.max_visual_odometry_extrinsic_translation,
-        }
-    }
-
-    fn visual_anchor_pose_gate(&self) -> VisualAnchorPoseGate {
-        VisualAnchorPoseGate {
-            require_recent_visual_anchor: self.require_recent_visual_anchor_for_large_pose_updates,
-            max_anchor_age: self.max_visual_anchor_age,
-            max_unanchored_translation_update: self.max_unanchored_translation_update as f64,
-            max_unanchored_yaw_update: self.max_unanchored_yaw_update as f64,
-        }
     }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct VisualOdometryExtrinsicGate {
-    pub reject_during_head_motion: bool,
     pub max_rotation: f32,
     pub max_translation: f32,
+}
+
+impl Default for VisualOdometryExtrinsicGate {
+    fn default() -> Self {
+        Self {
+            max_rotation: 0.02,
+            max_translation: 0.005,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -155,6 +100,17 @@ pub struct VisualAnchorPoseGate {
     pub max_anchor_age: Duration,
     pub max_unanchored_translation_update: f64,
     pub max_unanchored_yaw_update: f64,
+}
+
+impl Default for VisualAnchorPoseGate {
+    fn default() -> Self {
+        Self {
+            require_recent_visual_anchor: true,
+            max_anchor_age: Duration::from_millis(300),
+            max_unanchored_translation_update: 0.08,
+            max_unanchored_yaw_update: 0.10,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Message)]
@@ -414,9 +370,8 @@ pub async fn run(ctx: Arc<Context>) -> Result<()> {
                     continue;
                 };
 
-                let parameters = parameters.snapshot().typed().clone();
                 if should_reject_visual_odometry_due_to_head_motion(
-                    parameters.visual_odometry_extrinsic_gate(),
+                    VisualOdometryExtrinsicGate::default(),
                     &previous_camera_matrix.inner,
                     &current_camera_matrix.inner,
                 ) {
@@ -437,10 +392,9 @@ pub async fn run(ctx: Arc<Context>) -> Result<()> {
                     &visual_odometer,
                     &camera_matrix_cache,
                 ) {
-                    let parameters = parameters.snapshot().typed().clone();
                     let candidate_robot_to_field = robot_to_field_from_localization(transform);
                     let transform = if should_reject_unanchored_pose_update(
-                        parameters.visual_anchor_pose_gate(),
+                        VisualAnchorPoseGate::default(),
                         last_published_robot_to_field.as_ref(),
                         &candidate_robot_to_field,
                         last_visual_anchor_time,
@@ -492,9 +446,8 @@ pub async fn run(ctx: Arc<Context>) -> Result<()> {
                 });
 
                 let transform = result.as_ref().and_then(|result| {
-                    let parameters = parameters.snapshot().typed().clone();
                     if should_reject_unanchored_pose_update(
-                        parameters.visual_anchor_pose_gate(),
+                        VisualAnchorPoseGate::default(),
                         last_published_robot_to_field.as_ref(),
                         &result.transform,
                         last_visual_anchor_time,
@@ -864,10 +817,6 @@ pub fn should_reject_visual_odometry_due_to_head_motion(
     previous_camera_matrix: &CameraMatrix,
     current_camera_matrix: &CameraMatrix,
 ) -> bool {
-    if !gate.reject_during_head_motion {
-        return false;
-    }
-
     let previous_robot_to_camera = robot_to_camera(previous_camera_matrix).inner;
     let current_robot_to_camera = robot_to_camera(current_camera_matrix).inner;
     let previous_camera_to_current_camera =

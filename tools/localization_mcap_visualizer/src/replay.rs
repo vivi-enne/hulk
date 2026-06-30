@@ -57,9 +57,6 @@ pub struct ReplayParameters {
     pub max_visual_odometry_translation: Option<f32>,
     pub max_visual_odometry_rotation: Option<f32>,
     pub include_visual_odometry: bool,
-    pub reject_visual_odometry_during_head_motion: bool,
-    pub max_visual_odometry_extrinsic_rotation: f32,
-    pub max_visual_odometry_extrinsic_translation: f32,
     pub require_recent_visual_anchor_for_large_pose_updates: bool,
     pub max_visual_anchor_age: Duration,
     pub max_unanchored_translation_update: f32,
@@ -100,6 +97,7 @@ impl ReplayEvent<'_> {
 impl Default for ReplayParameters {
     fn default() -> Self {
         let localization_parameters = Localization3dParameters::default();
+        let visual_anchor_pose_gate = VisualAnchorPoseGate::default();
         let association_parameters = FieldMarkAssociationParameters::default();
         Self {
             timestamp_mode: TimestampMode::Embedded,
@@ -120,18 +118,13 @@ impl Default for ReplayParameters {
             max_visual_odometry_translation: None,
             max_visual_odometry_rotation: None,
             include_visual_odometry: true,
-            reject_visual_odometry_during_head_motion: localization_parameters
-                .reject_visual_odometry_during_head_motion,
-            max_visual_odometry_extrinsic_rotation: localization_parameters
-                .max_visual_odometry_extrinsic_rotation,
-            max_visual_odometry_extrinsic_translation: localization_parameters
-                .max_visual_odometry_extrinsic_translation,
-            require_recent_visual_anchor_for_large_pose_updates: localization_parameters
-                .require_recent_visual_anchor_for_large_pose_updates,
-            max_visual_anchor_age: localization_parameters.max_visual_anchor_age,
-            max_unanchored_translation_update: localization_parameters
-                .max_unanchored_translation_update,
-            max_unanchored_yaw_update: localization_parameters.max_unanchored_yaw_update,
+            require_recent_visual_anchor_for_large_pose_updates: visual_anchor_pose_gate
+                .require_recent_visual_anchor,
+            max_visual_anchor_age: visual_anchor_pose_gate.max_anchor_age,
+            max_unanchored_translation_update: visual_anchor_pose_gate
+                .max_unanchored_translation_update
+                as f32,
+            max_unanchored_yaw_update: visual_anchor_pose_gate.max_unanchored_yaw_update as f32,
             include_global_features: true,
             include_imu: true,
             include_imu_kinematics: true,
@@ -548,16 +541,6 @@ fn backend_config(parameters: &ReplayParameters) -> BackendConfiguration {
         visual_feature_noise_variance: parameters.visual_feature_noise_variance,
         pose_hint_visual_feature_noise_variance: parameters.pose_hint_visual_feature_noise_variance,
         pose_hint_visual_huber_threshold: parameters.pose_hint_visual_huber_threshold,
-        reject_visual_odometry_during_head_motion: parameters
-            .reject_visual_odometry_during_head_motion,
-        max_visual_odometry_extrinsic_rotation: parameters.max_visual_odometry_extrinsic_rotation,
-        max_visual_odometry_extrinsic_translation: parameters
-            .max_visual_odometry_extrinsic_translation,
-        require_recent_visual_anchor_for_large_pose_updates: parameters
-            .require_recent_visual_anchor_for_large_pose_updates,
-        max_visual_anchor_age: parameters.max_visual_anchor_age,
-        max_unanchored_translation_update: parameters.max_unanchored_translation_update,
-        max_unanchored_yaw_update: parameters.max_unanchored_yaw_update,
     };
     let mut config = backend_configuration_from_parameters(&localization_parameters);
     config.optimizer_max_iterations = parameters.optimizer_iterations.max(1);
@@ -617,13 +600,14 @@ fn ingest_vo_event(
         return Ok(());
     }
     if should_reject_visual_odometry_due_to_head_motion(
-        visual_odometry_extrinsic_gate(parameters),
+        VisualOdometryExtrinsicGate::default(),
         &previous_camera_matrix.matrix.matrix.inner,
         &current_camera_matrix.matrix.matrix.inner,
     ) {
         stats.vo_skipped_head_motion += 1;
         return Ok(());
     }
+
     let current_robot_to_previous_robot = current_robot_to_previous_robot_from_visual_odometry(
         delta,
         &previous_camera_matrix.matrix.matrix.inner,
@@ -726,14 +710,6 @@ fn current_robot_to_previous_robot_from_visual_odometry(
     previous_robot_to_left_camera.inverse()
         * delta.current_left_camera_to_previous_left_camera
         * current_robot_to_left_camera
-}
-
-fn visual_odometry_extrinsic_gate(parameters: &ReplayParameters) -> VisualOdometryExtrinsicGate {
-    VisualOdometryExtrinsicGate {
-        reject_during_head_motion: parameters.reject_visual_odometry_during_head_motion,
-        max_rotation: parameters.max_visual_odometry_extrinsic_rotation,
-        max_translation: parameters.max_visual_odometry_extrinsic_translation,
-    }
 }
 
 fn visual_anchor_pose_gate(parameters: &ReplayParameters) -> VisualAnchorPoseGate {
