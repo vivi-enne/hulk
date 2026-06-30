@@ -109,6 +109,8 @@ pub struct BackendSolveDiagnostics {
     pub factor_count: usize,
     pub total_error: f64,
     pub visual_odometry: ResidualDiagnostics,
+    pub global_visual_reprojection: ResidualDiagnostics,
+    pub pose_hint_visual_reprojection: ResidualDiagnostics,
     pub visual_reprojection: ResidualDiagnostics,
     pub foot_above_ground: ResidualDiagnostics,
     pub gaussian_process_prior: ResidualDiagnostics,
@@ -1161,8 +1163,15 @@ impl VinsBackend {
         let graph = self.optimizer.graph();
         let mut visual_odometry = self.residual_diagnostics::<VisualOdometryFactor>();
         visual_odometry.extend(self.residual_diagnostics::<AdjacentVisualOdometryFactor>());
-        let mut visual_reprojection = self.residual_diagnostics::<VisualReprojectionFactor>();
-        visual_reprojection.extend(self.residual_diagnostics::<PoseHintVisualReprojectionFactor>());
+        let global_visual_reprojection = self
+            .residual_diagnostics::<VisualReprojectionFactor>()
+            .finish();
+        let pose_hint_visual_reprojection = self
+            .residual_diagnostics::<PoseHintVisualReprojectionFactor>()
+            .finish();
+        let mut visual_reprojection = ResidualDiagnosticsAccumulator::default();
+        visual_reprojection.extend_diagnostics(global_visual_reprojection);
+        visual_reprojection.extend_diagnostics(pose_hint_visual_reprojection);
 
         BackendSolveDiagnostics {
             optimizer_status,
@@ -1170,6 +1179,8 @@ impl VinsBackend {
             factor_count: graph.len(),
             total_error: graph.error(&self.values),
             visual_odometry: visual_odometry.finish(),
+            global_visual_reprojection,
+            pose_hint_visual_reprojection,
             visual_reprojection: visual_reprojection.finish(),
             foot_above_ground: self
                 .residual_diagnostics::<IntervalFootAboveGroundFactor>()
@@ -1229,6 +1240,13 @@ impl ResidualDiagnosticsAccumulator {
         self.residual_dim += other.residual_dim;
         self.sum_squared_norm += other.sum_squared_norm;
         self.max_rms = self.max_rms.max(other.max_rms);
+    }
+
+    fn extend_diagnostics(&mut self, diagnostics: ResidualDiagnostics) {
+        self.factor_count += diagnostics.factor_count;
+        self.residual_dim += diagnostics.residual_dim;
+        self.sum_squared_norm += diagnostics.mean_rms.powi(2) * diagnostics.residual_dim as f64;
+        self.max_rms = self.max_rms.max(diagnostics.max_rms);
     }
 
     fn finish(self) -> ResidualDiagnostics {

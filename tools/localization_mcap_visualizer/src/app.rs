@@ -1350,7 +1350,17 @@ impl LocalizationMcapVisualizerApp {
                     diagnostics.visual_odometry.mean_rms, diagnostics.visual_odometry.max_rms
                 ));
                 ui.label(format!(
-                    "visual RMS mean/max: {:.3} / {:.3}",
+                    "global visual RMS mean/max: {:.3} / {:.3}",
+                    diagnostics.global_visual_reprojection.mean_rms,
+                    diagnostics.global_visual_reprojection.max_rms
+                ));
+                ui.label(format!(
+                    "local visual RMS mean/max: {:.3} / {:.3}",
+                    diagnostics.pose_hint_visual_reprojection.mean_rms,
+                    diagnostics.pose_hint_visual_reprojection.max_rms
+                ));
+                ui.label(format!(
+                    "all visual RMS mean/max: {:.3} / {:.3}",
                     diagnostics.visual_reprojection.mean_rms,
                     diagnostics.visual_reprojection.max_rms
                 ));
@@ -2042,7 +2052,7 @@ fn print_solver_samples(result: &ResolveResult) {
         component_trace_label(&result.parameters, false)
     );
     println!(
-        "replay_s,graph_s,raw_x,raw_y,raw_z,raw_yaw,shown_x,shown_y,shown_z,shown_yaw,raw_dxy,raw_dyaw,shown_dxy,shown_dyaw,reused_previous,status,total_error,vo_rms,visual_rms,foot_rms,gp_rms"
+        "replay_s,graph_s,raw_x,raw_y,raw_z,raw_yaw,shown_x,shown_y,shown_z,shown_yaw,raw_dxy,raw_dyaw,shown_dxy,shown_dyaw,reused_previous,status,total_error,vo_rms,global_visual_rms,local_visual_rms,visual_rms,foot_rms,gp_rms"
     );
 
     let mut previous_raw = None;
@@ -2065,6 +2075,12 @@ fn print_solver_samples(result: &ResolveResult) {
             .unwrap_or_else(|| "None".to_string());
         let total_error = diagnostics.map_or(0.0, |diagnostics| diagnostics.total_error);
         let vo_rms = diagnostics.map_or(0.0, |diagnostics| diagnostics.visual_odometry.mean_rms);
+        let global_visual_rms = diagnostics.map_or(0.0, |diagnostics| {
+            diagnostics.global_visual_reprojection.mean_rms
+        });
+        let local_visual_rms = diagnostics.map_or(0.0, |diagnostics| {
+            diagnostics.pose_hint_visual_reprojection.mean_rms
+        });
         let visual_rms =
             diagnostics.map_or(0.0, |diagnostics| diagnostics.visual_reprojection.mean_rms);
         let foot_rms =
@@ -2074,7 +2090,7 @@ fn print_solver_samples(result: &ResolveResult) {
         });
 
         println!(
-            "{:.3},{:.3},{:.4},{:.4},{:.4},{:.4},{:.4},{:.4},{:.4},{:.4},{:.4},{:.4},{:.4},{:.4},{},{},{:.6},{:.6},{:.6},{:.6},{:.6}",
+            "{:.3},{:.3},{:.4},{:.4},{:.4},{:.4},{:.4},{:.4},{:.4},{:.4},{:.4},{:.4},{:.4},{:.4},{},{},{:.6},{:.6},{:.6},{:.6},{:.6},{:.6},{:.6}",
             sample.replay_seconds,
             sample.graph_seconds,
             raw.0,
@@ -2093,6 +2109,8 @@ fn print_solver_samples(result: &ResolveResult) {
             status,
             total_error,
             vo_rms,
+            global_visual_rms,
+            local_visual_rms,
             visual_rms,
             foot_rms,
             gp_rms,

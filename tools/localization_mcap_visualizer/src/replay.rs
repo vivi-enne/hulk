@@ -299,6 +299,11 @@ fn run_resolve(
         localization_3d::initial_robot_to_field_from_camera_matrix(&recording.first_camera_matrix)
             .inner,
     );
+    let initial_pose_hint =
+        localization_3d::initial_robot_to_field_from_camera_matrix(&recording.first_camera_matrix)
+            .inner
+            .cast::<f32>()
+            .framed_transform::<Robot, Field>();
     let mut has_pending_measurements = false;
     let mut last_visual_anchor_time = None;
     let mut last_accepted_robot_to_field = None;
@@ -478,6 +483,7 @@ fn run_resolve(
                         &mut association_state,
                         &parameters,
                         &field_dimensions,
+                        initial_pose_hint,
                         &mut stats,
                         &mut has_pending_measurements,
                     )? {
@@ -823,6 +829,7 @@ fn ingest_recomputed_global_features(
     association_state: &mut FieldMarkAssociationState,
     parameters: &ReplayParameters,
     field_dimensions: &FieldDimensions,
+    initial_pose_hint: linear_algebra::Isometry3<Robot, Field>,
     stats: &mut ReplayStats,
     has_pending_measurements: &mut bool,
 ) -> Result<Option<SystemTime>> {
@@ -858,7 +865,8 @@ fn ingest_recomputed_global_features(
                 .transform
                 .cast::<f32>()
                 .framed_transform::<Robot, Field>()
-        });
+        })
+        .or(Some(initial_pose_hint));
     let association_parameters = FieldMarkAssociationParameters {
         global_localizer: parameters.global_localizer,
         pose_hint: parameters.pose_hint,
