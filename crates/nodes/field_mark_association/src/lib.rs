@@ -280,14 +280,35 @@ pub fn associate_visual_features(
     pose_hint: Option<Isometry3<Robot, Field>>,
     parameters: &FieldMarkAssociationParameters,
 ) -> GlobalVisualLocalization {
-    FieldMarkAssociationState::default().associate_visual_features_with_debug(
+    let localizer = GlobalAssociator::new(parameters.global_localizer);
+    let input = GlobalLocalizationInput {
         visual_features,
-        camera_matrix,
         field_dimensions,
+        ground_to_robot: camera_matrix.ground_to_robot,
+        robot_to_camera: robot_to_camera(camera_matrix),
+        camera_intrinsic: camera_matrix.intrinsics,
         pose_hint,
-        parameters,
-        true,
-    )
+    };
+
+    let pose_hint_result = localizer.associate_with_pose_hint(input.clone(), parameters.pose_hint);
+    if !pose_hint_result.associations.is_empty() {
+        return GlobalVisualLocalization {
+            debug: None,
+            associations: pose_hint_field_mark_associations(&pose_hint_result),
+        };
+    }
+
+    let result = localizer.localize(input);
+    GlobalVisualLocalization {
+        debug: result.as_ref().map(global_localization_debug_from_result),
+        associations: result
+            .as_ref()
+            .and_then(GlobalLocalizationResult::unique_feature_associations)
+            .map(|associations| {
+                field_mark_associations(associations.iter(), FieldMarkAssociationKind::GlobalUnique)
+            })
+            .unwrap_or_default(),
+    }
 }
 
 impl FieldMarkAssociationState {
@@ -313,8 +334,11 @@ impl FieldMarkAssociationState {
 
         let pose_hint_result =
             localizer.associate_with_pose_hint(input.clone(), parameters.pose_hint);
-        if self.has_global_lock && pose_hint_result.is_healthy(parameters.pose_hint) {
-            self.reset_recovery();
+        if !pose_hint_result.associations.is_empty() {
+            if pose_hint_result.is_healthy(parameters.pose_hint) {
+                self.has_global_lock = true;
+                self.reset_recovery();
+            }
             return GlobalVisualLocalization {
                 debug: None,
                 associations: pose_hint_field_mark_associations(&pose_hint_result),
@@ -638,8 +662,11 @@ fn robot_to_camera(camera_matrix: &CameraMatrix) -> Isometry3<Robot, Camera> {
 
 #[cfg(test)]
 mod tests {
+    use coordinate_systems::{Camera, Field, Head, Pixel, Robot};
     use geometry::rectangle::Rectangle;
+    use linear_algebra::{IntoTransform as _, vector};
     use types::bounding_box::BoundingBox;
+    use types::field_dimensions::{FieldDimensions, Half, Side};
 
     use super::*;
 
@@ -713,5 +740,172 @@ mod tests {
 
     fn feature_pixels(features: &[DetectedVisualFeature]) -> Vec<Point2<Pixel>> {
         features.iter().map(|feature| feature.pixel).collect()
+    }
+
+    #[test]
+    fn pose_hint_associations_are_preferred_when_reprojection_matches() {
+        let field = FieldDimensions::SPL_2025;
+        let pose = robot_to_field(0.0, 0.0, 0.0);
+        let camera_matrix = synthetic_camera_matrix();
+        let features = features_projected_from_pose(
+            &camera_matrix,
+            pose,
+            [
+                (
+                    VisualFeatureClass::GoalPost,
+                    field.goal_post(Half::Opponent, Side::Left),
+                ),
+                (
+                    VisualFeatureClass::GoalPost,
+                    field.goal_post(Half::Opponent, Side::Right),
+                ),
+                (
+                    VisualFeatureClass::PenaltySpot,
+                    field.penalty_spot(Half::Opponent),
+                ),
+                (VisualFeatureClass::TSpot, field.t_crossing(Side::Left)),
+            ],
+        );
+
+        let localization = associate_visual_features(
+            &features,
+            &camera_matrix,
+            &field,
+            Some(pose),
+            &FieldMarkAssociationParameters::default(),
+        );
+
+        assert!(!localization.associations.is_empty());
+        assert!(
+            localization
+                .associations
+                .iter()
+                .all(|association| association.kind == FieldMarkAssociationKind::PoseHint),
+            "pose-consistent reprojection associations should be used before global association: {:?}",
+            localization.associations
+        );
+    }
+
+    #[test]
+    fn global_association_is_used_when_pose_hint_reprojection_gate_rejects_features() {
+        let field = FieldDimensions::SPL_2025;
+        let true_pose = robot_to_field(0.0, 0.0, 0.0);
+        let wrong_pose_hint = robot_to_field(0.6, 0.0, 0.0);
+        let camera_matrix = synthetic_camera_matrix();
+        let features = features_projected_from_pose(
+            &camera_matrix,
+            true_pose,
+            [
+                (
+                    VisualFeatureClass::GoalPost,
+                    field.goal_post(Half::Opponent, Side::Left),
+                ),
+                (
+                    VisualFeatureClass::GoalPost,
+                    field.goal_post(Half::Opponent, Side::Right),
+                ),
+                (
+                    VisualFeatureClass::PenaltySpot,
+                    field.penalty_spot(Half::Opponent),
+                ),
+                (VisualFeatureClass::TSpot, field.t_crossing(Side::Left)),
+            ],
+        );
+
+        let mut parameters = FieldMarkAssociationParameters::default();
+        parameters.global_localizer.min_inliers = 3;
+        parameters.pose_hint.max_reprojection_error_px = 1.0;
+
+        let localization = associate_visual_features(
+            &features,
+            &camera_matrix,
+            &field,
+            Some(wrong_pose_hint),
+            &parameters,
+        );
+
+        assert!(!localization.associations.is_empty());
+        assert!(
+            localization
+                .associations
+                .iter()
+                .all(|association| association.kind == FieldMarkAssociationKind::GlobalUnique),
+            "global association should be used after pose-hint reprojection is rejected: {:?}",
+            localization.associations
+        );
+    }
+
+    #[test]
+    fn fewer_than_three_features_still_use_pose_hint_reprojection() {
+        let field = FieldDimensions::SPL_2025;
+        let pose = robot_to_field(0.0, 0.0, 0.0);
+        let camera_matrix = synthetic_camera_matrix();
+        let features = features_projected_from_pose(
+            &camera_matrix,
+            pose,
+            [(
+                VisualFeatureClass::PenaltySpot,
+                field.penalty_spot(Half::Opponent),
+            )],
+        );
+
+        let localization = associate_visual_features(
+            &features,
+            &camera_matrix,
+            &field,
+            Some(pose),
+            &FieldMarkAssociationParameters::default(),
+        );
+
+        assert_eq!(localization.associations.len(), 1);
+        assert_eq!(
+            localization.associations[0].kind,
+            FieldMarkAssociationKind::PoseHint
+        );
+    }
+
+    fn synthetic_camera_matrix() -> CameraMatrix {
+        CameraMatrix::from_normalized_focal_and_center(
+            nalgebra::vector![60.0 / 1280.0, 60.0 / 960.0],
+            nalgebra::point![0.5, 0.5],
+            vector![<Pixel>, 1280.0, 960.0],
+            Isometry3::identity(),
+            Isometry3::identity(),
+            nalgebra::Isometry3::translation(0.0, 0.0, 0.5).framed_transform::<Head, Camera>(),
+        )
+    }
+
+    fn robot_to_field(x: f32, y: f32, yaw: f32) -> Isometry3<Robot, Field> {
+        Isometry3::<Robot, Field>::wrap(nalgebra::Isometry3::from_parts(
+            nalgebra::Translation3::new(x, y, 0.0),
+            nalgebra::UnitQuaternion::from_axis_angle(&nalgebra::Vector3::z_axis(), yaw),
+        ))
+    }
+
+    fn features_projected_from_pose<const N: usize>(
+        camera_matrix: &CameraMatrix,
+        robot_to_field: Isometry3<Robot, Field>,
+        landmarks: [(VisualFeatureClass, Point2<Field>); N],
+    ) -> DetectedVisualFeatures {
+        let field_to_camera = robot_to_camera(camera_matrix) * robot_to_field.inverse();
+        let mut features = DetectedVisualFeatures::default();
+
+        for (class, field_point) in landmarks {
+            let camera_point = field_to_camera * field_point.extend(0.0);
+            let pixel = camera_matrix.intrinsics.project(camera_point.coords());
+            let feature = DetectedVisualFeature {
+                pixel,
+                confidence: 0.9,
+            };
+
+            match class {
+                VisualFeatureClass::GoalPost => features.goalposts.push(feature),
+                VisualFeatureClass::LSpot => features.l_spots.push(feature),
+                VisualFeatureClass::TSpot => features.t_spots.push(feature),
+                VisualFeatureClass::PenaltySpot => features.penalty_spots.push(feature),
+            }
+        }
+
+        features
     }
 }
