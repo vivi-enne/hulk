@@ -1347,6 +1347,11 @@ impl LocalizationMcapVisualizerApp {
                     diagnostics.visual_reprojection.max_rms
                 ));
                 ui.label(format!(
+                    "foot RMS mean/max: {:.3} / {:.3}",
+                    diagnostics.foot_above_ground.mean_rms,
+                    diagnostics.foot_above_ground.max_rms
+                ));
+                ui.label(format!(
                     "GP RMS mean/max: {:.3} / {:.3}",
                     diagnostics.gaussian_process_prior.mean_rms,
                     diagnostics.gaussian_process_prior.max_rms
@@ -1648,10 +1653,10 @@ impl LocalizationMcapVisualizerApp {
         let field_rect = top_down_field_rect(rect, &dimensions);
         draw_top_down_field_markings(&painter, field_rect, &dimensions);
 
+        let trajectory_seconds = detected_objects_time
+            .map(|time| self.recording.seconds_since_start(time))
+            .unwrap_or(self.position_seconds);
         if self.show_top_down_path {
-            let trajectory_seconds = detected_objects_time
-                .map(|time| self.recording.seconds_since_start(time))
-                .unwrap_or(self.position_seconds);
             self.draw_top_down_trajectory(&painter, field_rect, &dimensions, trajectory_seconds);
         }
 
@@ -1681,7 +1686,13 @@ impl LocalizationMcapVisualizerApp {
 
         if let Some(debug) = global_debug {
             let robot_translation = debug.robot_to_field.inner.translation.vector;
-            draw_top_down_robot_pose(&painter, field_rect, &dimensions, &debug.robot_to_field);
+            draw_top_down_robot_pose(
+                &painter,
+                field_rect,
+                &dimensions,
+                &debug.robot_to_field,
+                Color32::from_rgb(255, 82, 190),
+            );
             response.on_hover_text(format!(
                 "{} associations, robot ({:.2}, {:.2})",
                 debug.associations.len(),
@@ -1690,6 +1701,17 @@ impl LocalizationMcapVisualizerApp {
             ));
         } else {
             response.on_hover_text("no global-localization pose for this frame");
+        }
+
+        if let Some(replay_pose) = self.active_resolved_pose(trajectory_seconds) {
+            let replay_pose = replay_pose.inner.cast().framed_transform();
+            draw_top_down_robot_pose(
+                &painter,
+                field_rect,
+                &dimensions,
+                &replay_pose,
+                Color32::from_rgb(82, 255, 140),
+            );
         }
     }
 
@@ -2037,7 +2059,7 @@ fn print_solver_samples(result: &ResolveResult) {
         component_trace_label(&result.parameters, false)
     );
     println!(
-        "replay_s,graph_s,raw_x,raw_y,raw_z,raw_yaw,shown_x,shown_y,shown_z,shown_yaw,raw_dxy,raw_dyaw,shown_dxy,shown_dyaw,reused_previous,status,total_error,vo_rms,visual_rms,gp_rms"
+        "replay_s,graph_s,raw_x,raw_y,raw_z,raw_yaw,shown_x,shown_y,shown_z,shown_yaw,raw_dxy,raw_dyaw,shown_dxy,shown_dyaw,reused_previous,status,total_error,vo_rms,visual_rms,foot_rms,gp_rms"
     );
 
     let mut previous_raw = None;
@@ -2062,12 +2084,14 @@ fn print_solver_samples(result: &ResolveResult) {
         let vo_rms = diagnostics.map_or(0.0, |diagnostics| diagnostics.visual_odometry.mean_rms);
         let visual_rms =
             diagnostics.map_or(0.0, |diagnostics| diagnostics.visual_reprojection.mean_rms);
+        let foot_rms =
+            diagnostics.map_or(0.0, |diagnostics| diagnostics.foot_above_ground.mean_rms);
         let gp_rms = diagnostics.map_or(0.0, |diagnostics| {
             diagnostics.gaussian_process_prior.mean_rms
         });
 
         println!(
-            "{:.3},{:.3},{:.4},{:.4},{:.4},{:.4},{:.4},{:.4},{:.4},{:.4},{:.4},{:.4},{:.4},{:.4},{},{},{:.6},{:.6},{:.6},{:.6}",
+            "{:.3},{:.3},{:.4},{:.4},{:.4},{:.4},{:.4},{:.4},{:.4},{:.4},{:.4},{:.4},{:.4},{:.4},{},{},{:.6},{:.6},{:.6},{:.6},{:.6}",
             sample.replay_seconds,
             sample.graph_seconds,
             raw.0,
@@ -2087,6 +2111,7 @@ fn print_solver_samples(result: &ResolveResult) {
             total_error,
             vo_rms,
             visual_rms,
+            foot_rms,
             gp_rms,
         );
     }
@@ -2575,6 +2600,7 @@ fn draw_top_down_robot_pose(
     field_rect: Rect,
     dimensions: &FieldDimensions,
     robot_to_field: &linear_algebra::Isometry3<Robot, Field>,
+    color: Color32,
 ) {
     let robot_translation = robot_to_field.inner.translation.vector;
     if !robot_translation.x.is_finite() || !robot_translation.y.is_finite() {
@@ -2598,24 +2624,21 @@ fn draw_top_down_robot_pose(
     );
     let arrow = tip - center;
 
-    painter.circle_filled(center, 4.0, Color32::from_rgb(82, 170, 255));
+    painter.circle_filled(center, 4.0, color);
     if arrow.length_sq() <= 1.0 {
         return;
     }
 
     let direction = arrow.normalized();
     let perpendicular = vec2(-direction.y, direction.x);
-    painter.line_segment(
-        [center, tip],
-        Stroke::new(2.0, Color32::from_rgb(82, 170, 255)),
-    );
+    painter.line_segment([center, tip], Stroke::new(2.0, color));
     painter.add(egui::Shape::convex_polygon(
         vec![
             tip,
             tip - direction * 8.0 + perpendicular * 4.0,
             tip - direction * 8.0 - perpendicular * 4.0,
         ],
-        Color32::from_rgb(82, 170, 255),
+        color,
         Stroke::NONE,
     ));
 }

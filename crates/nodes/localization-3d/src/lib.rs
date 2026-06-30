@@ -165,6 +165,7 @@ pub struct SolveDiagnostics {
     pub total_error: f64,
     pub visual_odometry: SolveResidualDiagnostics,
     pub visual_reprojection: SolveResidualDiagnostics,
+    pub foot_above_ground: SolveResidualDiagnostics,
     pub gaussian_process_prior: SolveResidualDiagnostics,
 }
 
@@ -193,6 +194,7 @@ impl From<BackendSolveDiagnostics> for SolveDiagnostics {
             total_error: diagnostics.total_error,
             visual_odometry: diagnostics.visual_odometry.into(),
             visual_reprojection: diagnostics.visual_reprojection.into(),
+            foot_above_ground: diagnostics.foot_above_ground.into(),
             gaussian_process_prior: diagnostics.gaussian_process_prior.into(),
         }
     }

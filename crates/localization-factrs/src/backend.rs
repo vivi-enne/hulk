@@ -110,6 +110,7 @@ pub struct BackendSolveDiagnostics {
     pub total_error: f64,
     pub visual_odometry: ResidualDiagnostics,
     pub visual_reprojection: ResidualDiagnostics,
+    pub foot_above_ground: ResidualDiagnostics,
     pub gaussian_process_prior: ResidualDiagnostics,
 }
 
@@ -1170,6 +1171,9 @@ impl VinsBackend {
             total_error: graph.error(&self.values),
             visual_odometry: visual_odometry.finish(),
             visual_reprojection: visual_reprojection.finish(),
+            foot_above_ground: self
+                .residual_diagnostics::<IntervalFootAboveGroundFactor>()
+                .finish(),
             gaussian_process_prior: self
                 .residual_diagnostics::<GaussianProcessPriorFactor>()
                 .finish(),

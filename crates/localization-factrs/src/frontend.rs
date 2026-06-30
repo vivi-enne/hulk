@@ -146,7 +146,6 @@ impl VinsFrontend {
             left_sole_in_robot,
             right_sole_in_robot,
         };
-
         self.measurement_sender
             .send(SensorMeasurement::FootHeights(measurement))
             .map_err(|_| VinsFrontendError::BackendDisconnected)
