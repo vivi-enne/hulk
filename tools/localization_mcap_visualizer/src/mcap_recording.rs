@@ -14,7 +14,7 @@ use field_mark_association::{FieldMarkAssociations, GlobalLocalizationDebug};
 use image::RgbImage;
 use kinematics::robot_kinematics::RobotKinematics;
 use linear_algebra::{IntoTransform, Isometry3, vector};
-use localization_3d::SolveDiagnostics;
+use localization_3d::{SolveDiagnostics, SolveOptimizerStatus, SolveResidualDiagnostics};
 use mcap::{Message, MessageStream, read::Options};
 use projection::{camera_matrix::CameraMatrix, intrinsic::Intrinsic};
 use ros_z::time::Time;
@@ -165,7 +165,7 @@ impl Recording {
                     decode_recorded_message(&message)?,
                 )),
                 TOPIC_SOLVE_DIAGNOSTICS => Some(EventKind::SolveDiagnostics(
-                    decode_recorded_message(&message)?,
+                    decode_recorded_solve_diagnostics(&message)?,
                 )),
                 TOPIC_STEREO_IMAGE_PAIR => {
                     let data: Arc<[u8]> = message.data.into_owned().into();
@@ -1185,6 +1185,44 @@ struct WireTimeWrapper<T> {
 }
 
 #[derive(Deserialize)]
+struct WireLegacySolveDiagnostics {
+    optimizer_status: SolveOptimizerStatus,
+    value_count: usize,
+    factor_count: usize,
+    total_error: f64,
+    visual_odometry: SolveResidualDiagnostics,
+    visual_reprojection: SolveResidualDiagnostics,
+    foot_above_ground: SolveResidualDiagnostics,
+    gaussian_process_prior: SolveResidualDiagnostics,
+}
+
+impl From<WireLegacySolveDiagnostics> for SolveDiagnostics {
+    fn from(diagnostics: WireLegacySolveDiagnostics) -> Self {
+        Self {
+            optimizer_status: diagnostics.optimizer_status,
+            value_count: diagnostics.value_count,
+            factor_count: diagnostics.factor_count,
+            total_error: diagnostics.total_error,
+            visual_odometry: diagnostics.visual_odometry,
+            global_visual_reprojection: diagnostics.visual_reprojection,
+            pose_hint_visual_reprojection: empty_solve_residual_diagnostics(),
+            visual_reprojection: diagnostics.visual_reprojection,
+            foot_above_ground: diagnostics.foot_above_ground,
+            gaussian_process_prior: diagnostics.gaussian_process_prior,
+        }
+    }
+}
+
+fn empty_solve_residual_diagnostics() -> SolveResidualDiagnostics {
+    SolveResidualDiagnostics {
+        factor_count: 0,
+        residual_dim: 0,
+        mean_rms: 0.0,
+        max_rms: 0.0,
+    }
+}
+
+#[derive(Deserialize)]
 struct WireCameraMatrix {
     ground_to_robot: WireIsometry3,
     robot_to_head: WireIsometry3,
@@ -1302,6 +1340,27 @@ fn decode_recorded_camera_matrix(message: &Message<'_>) -> Result<TimeWrapper<Ca
 fn decode_recorded_visual_odometry(message: &Message<'_>) -> Result<VisualOdometryDelta> {
     let wire: WireVisualOdometryDelta = decode_recorded_message(message)?;
     Ok(wire.into_visual_odometry_delta())
+}
+
+fn decode_recorded_solve_diagnostics(
+    message: &Message<'_>,
+) -> Result<TimeWrapper<SolveDiagnostics>> {
+    match decode_message(&message.data) {
+        Ok(diagnostics) => Ok(diagnostics),
+        Err(current_error) => {
+            let wire: WireTimeWrapper<WireLegacySolveDiagnostics> =
+                decode_message(&message.data).wrap_err_with(|| {
+                    format!(
+                        "failed to decode topic {} sequence {} as current or legacy solve diagnostics; current schema error: {current_error:#}",
+                        message.channel.topic, message.sequence
+                    )
+                })?;
+            Ok(TimeWrapper {
+                time: wire.time,
+                inner: wire.inner.into(),
+            })
+        }
+    }
 }
 
 fn decode_recorded_message<T>(message: &Message<'_>) -> Result<T>
