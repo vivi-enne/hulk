@@ -33,7 +33,9 @@ async fn run(ctx: Arc<Context>) -> Result<()> {
     };
 
     loop {
-        let samples = microphones.retrying_read()?;
+        let Some(samples) = microphones.retrying_read()? else {
+            continue;
+        };
         microphones_samples_pub.publish(&samples).await?;
     }
 }
